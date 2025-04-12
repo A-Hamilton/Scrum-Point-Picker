@@ -1,0 +1,824 @@
+import pandas as pd
+import joblib
+import numpy as np
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, log_loss, f1_score, make_scorer
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.calibration import CalibratedClassifierCV
+import requests
+import os
+from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV, train_test_split
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from sklearn.ensemble import StackingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from imblearn.over_sampling import SMOTE
+from sklearn.utils.class_weight import compute_class_weight
+import logging
+from bs4 import BeautifulSoup
+import re
+import shap
+
+# Suppress FutureWarning for downcasting in .fillna
+pd.set_option('future.no_silent_downcasting', True)
+
+# Silence joblib warning
+os.environ['LOKY_MAX_CPU_COUNT'] = '4'
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Function to scrape live Premier League standings
+def scrape_standings():
+    url = "https://www.premierleague.com/tables"
+    try:
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        if response.status_code != 200:
+            logging.error(f"Failed to scrape standings. Status code: {response.status_code}")
+            return None
+        soup = BeautifulSoup(response.content, 'html.parser')
+        table = soup.find('table')
+        standings = {}
+        for row in table.find_all('tr', {'data-compseason': True})[:20]:  # Top 20 teams
+            team_name = row.find('span', class_='long').text.strip().replace("'", "_").replace(" ", "_")
+            position = int(row.find('td', class_='pos').find('span', class_='value').text.strip())
+            standings[team_name] = position
+        return standings
+    except Exception as e:
+        logging.error(f"Error scraping standings: {e}")
+        return None
+
+# Function to download datasets (only EPL data for 2024-2025 season)
+def download_datasets():
+    season = '2425'  # 2024-2025 season
+    historical_dfs = []
+    filename = f"E0_{season}.csv"
+    url = f"https://www.football-data.co.uk/mmz4281/{season}/E0.csv"
+    if not os.path.exists(filename):
+        try:
+            response = requests.get(url, allow_redirects=True)
+            if response.status_code == 200:
+                with open(filename, 'wb') as file:
+                    file.write(response.content)
+                logging.info(f"{filename} downloaded successfully.")
+            else:
+                logging.error(f"Failed to download {filename}. Status code: {response.status_code}")
+                return
+        except Exception as e:
+            logging.error(f"Error downloading {filename}: {e}")
+            return
+    try:
+        df = pd.read_csv(filename)
+        historical_dfs.append(df)
+    except Exception as e:
+        logging.error(f"Error reading {filename}: {e}")
+        return
+
+    if not historical_dfs:
+        raise ValueError("No historical data could be downloaded or read. Please check the URL or local file.")
+
+    combined_historical = pd.concat(historical_dfs, ignore_index=True)
+    combined_historical.to_csv('E0.csv', index=False)
+    logging.info("Current season historical data saved to E0.csv")
+
+    upcoming_file = "epl-2024-GMTStandardTime.csv"
+    upcoming_url = "https://fixturedownload.com/download/epl-2024-GMTStandardTime.csv"
+    if not os.path.exists(upcoming_file):
+        response = requests.get(upcoming_url, allow_redirects=True)
+        if response.status_code == 200:
+            with open(upcoming_file, 'wb') as file:
+                file.write(response.content)
+            logging.info(f"{upcoming_file} downloaded successfully.")
+
+# Function to clean team names
+def clean_team_names(df):
+    df = df.copy()
+    for col in ['HomeTeam', 'AwayTeam']:
+        if col in df.columns:
+            df[col] = df[col].str.replace("'", "_").str.replace(" ", "_")
+            df[f'Original{col}'] = df[col]
+    return df
+
+# Function to create features with proper time-based rolling stats
+def create_features(historical_df, df, standings, is_training=True):
+    historical_df = clean_team_names(historical_df)
+    df = clean_team_names(df)
+    historical_df = historical_df.sort_values(by='Date')
+    df = df.sort_values(by='Date')
+
+    all_teams = sorted(set(historical_df['HomeTeam'].unique()) | set(historical_df['AwayTeam'].unique()))
+
+    # Head-to-head statistics
+    historical_df['H2H_Home_Win'] = 0.0
+    historical_df['H2H_Draw'] = 0.0
+    historical_df['H2H_Away_Win'] = 0.0
+    df['H2H_Home_Win'] = 0.0
+    df['H2H_Draw'] = 0.0
+    df['H2H_Away_Win'] = 0.0
+
+    for idx, row in historical_df.iterrows():
+        match_date = row['Date']
+        past_h2h = historical_df[(historical_df['HomeTeam'] == row['HomeTeam']) & 
+                                 (historical_df['AwayTeam'] == row['AwayTeam']) & 
+                                 (historical_df['Date'] < match_date)]
+        if not past_h2h.empty:
+            h2h_stats = past_h2h['FTR'].value_counts(normalize=True)
+            historical_df.loc[idx, 'H2H_Home_Win'] = h2h_stats.get('H', 0.0)
+            historical_df.loc[idx, 'H2H_Draw'] = h2h_stats.get('D', 0.0)
+            historical_df.loc[idx, 'H2H_Away_Win'] = h2h_stats.get('A', 0.0)
+
+    for idx, row in df.iterrows():
+        match_date = row['Date']
+        past_h2h = historical_df[(historical_df['HomeTeam'] == row['HomeTeam']) & 
+                                 (historical_df['AwayTeam'] == row['AwayTeam']) & 
+                                 (historical_df['Date'] < match_date)]
+        if not past_h2h.empty:
+            h2h_stats = past_h2h['FTR'].value_counts(normalize=True)
+            df.loc[idx, 'H2H_Home_Win'] = h2h_stats.get('H', 0.0)
+            df.loc[idx, 'H2H_Draw'] = h2h_stats.get('D', 0.0)
+            df.loc[idx, 'H2H_Away_Win'] = h2h_stats.get('A', 0.0)
+
+    # Home advantage metric
+    home_advantage = historical_df.groupby('HomeTeam')['FTR'].apply(lambda x: (x == 'H').mean()).to_dict()
+    historical_df['HomeAdvantage'] = historical_df['HomeTeam'].map(home_advantage).fillna(0)
+    df['HomeAdvantage'] = df['HomeTeam'].map(home_advantage).fillna(0)
+
+    # Add current standings
+    historical_df['HomeTeamPosition'] = historical_df['HomeTeam'].map(standings).fillna(20)
+    historical_df['AwayTeamPosition'] = historical_df['AwayTeam'].map(standings).fillna(20)
+    df['HomeTeamPosition'] = df['HomeTeam'].map(standings).fillna(20)
+    df['AwayTeamPosition'] = df['AwayTeam'].map(standings).fillna(20)
+
+    # Position Difference (Match Context)
+    historical_df['PositionDiff'] = abs(historical_df['HomeTeamPosition'] - historical_df['AwayTeamPosition'])
+    df['PositionDiff'] = abs(df['HomeTeamPosition'] - df['AwayTeamPosition'])
+
+    # Rolling stats (window=3), computed row-by-row to avoid leakage
+    historical_df['HomeRecentFormGoalsScored'] = 0.0
+    historical_df['AwayRecentFormGoalsScored'] = 0.0
+    historical_df['HomeGoalDiffRolling'] = 0.0
+    historical_df['AwayGoalDiffRolling'] = 0.0
+    historical_df['HomeRecentDrawRate'] = 0.0
+    historical_df['AwayRecentDrawRate'] = 0.0
+    historical_df['HomeHistoricalDrawRate'] = 0.0
+    historical_df['AwayHistoricalDrawRate'] = 0.0
+    historical_df['HomeGoalsConcededRolling'] = 0.0
+    historical_df['AwayGoalsConcededRolling'] = 0.0
+    historical_df['HomeDaysSinceLastMatch'] = 0.0
+    historical_df['AwayDaysSinceLastMatch'] = 0.0
+    historical_df['HomeDrawRate10'] = 0.0
+    historical_df['AwayDrawRate10'] = 0.0
+    historical_df['HomeShotsOnTarget'] = 0.0
+    historical_df['AwayShotsOnTarget'] = 0.0
+    historical_df['HomeCorners'] = 0.0
+    historical_df['AwayCorners'] = 0.0
+    historical_df['HomeFatigue'] = 0.0
+    historical_df['AwayFatigue'] = 0.0
+    historical_df['HomeFormStreak'] = 0.0
+    historical_df['AwayFormStreak'] = 0.0
+    historical_df['HomeGoalEfficiency'] = 0.0
+    historical_df['AwayGoalEfficiency'] = 0.0
+
+    df['HomeRecentFormGoalsScored'] = 0.0
+    df['AwayRecentFormGoalsScored'] = 0.0
+    df['HomeGoalDiffRolling'] = 0.0
+    df['AwayGoalDiffRolling'] = 0.0
+    df['HomeRecentDrawRate'] = 0.0
+    df['AwayRecentDrawRate'] = 0.0
+    df['HomeHistoricalDrawRate'] = 0.0
+    df['AwayHistoricalDrawRate'] = 0.0
+    df['HomeGoalsConcededRolling'] = 0.0
+    df['AwayGoalsConcededRolling'] = 0.0
+    df['HomeDaysSinceLastMatch'] = 0.0
+    df['AwayDaysSinceLastMatch'] = 0.0
+    df['HomeDrawRate10'] = 0.0
+    df['AwayDrawRate10'] = 0.0
+    df['HomeShotsOnTarget'] = 0.0
+    df['AwayShotsOnTarget'] = 0.0
+    df['HomeCorners'] = 0.0
+    df['AwayCorners'] = 0.0
+    df['HomeFatigue'] = 0.0
+    df['AwayFatigue'] = 0.0
+    df['HomeFormStreak'] = 0.0
+    df['AwayFormStreak'] = 0.0
+    df['HomeGoalEfficiency'] = 0.0
+    df['AwayGoalEfficiency'] = 0.0
+
+    for idx, row in historical_df.iterrows():
+        match_date = row['Date']
+        team_home = row['HomeTeam']
+        team_away = row['AwayTeam']
+        # Last 3 matches of home team (overall, not just home or away)
+        past_matches_home = historical_df[((historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)) & 
+                                          (historical_df['Date'] < match_date)].tail(3)
+        # Last 3 matches of away team
+        past_matches_away = historical_df[((historical_df['HomeTeam'] == team_away) | (historical_df['AwayTeam'] == team_away)) & 
+                                          (historical_df['Date'] < match_date)].tail(3)
+        past_home_long = historical_df[((historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)) & 
+                                       (historical_df['Date'] < match_date)].tail(10)
+        past_away_long = historical_df[((historical_df['AwayTeam'] == team_away) | (historical_df['HomeTeam'] == team_away)) & 
+                                       (historical_df['Date'] < match_date)].tail(10)
+        # Fatigue: Matches in last 14 days
+        past_home_fatigue = historical_df[((historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)) & 
+                                          (historical_df['Date'] < match_date) & 
+                                          ((match_date - historical_df['Date']).dt.days <= 14)]
+        past_away_fatigue = historical_df[((historical_df['HomeTeam'] == team_away) | (historical_df['AwayTeam'] == team_away)) & 
+                                          (historical_df['Date'] < match_date) & 
+                                          ((match_date - historical_df['Date']).dt.days <= 14)]
+        # For home team
+        goals_scored_home = []
+        goals_conceded_home = []
+        shots_on_target_home = []
+        corners_home = []
+        form_streak_home = 0
+        for _, match in past_matches_home.iterrows():
+            if match['HomeTeam'] == team_home:
+                goals_scored_home.append(match['FTHG'])
+                goals_conceded_home.append(match['FTAG'])
+                shots_on_target_home.append(match['HST'] if 'HST' in match and pd.notnull(match['HST']) else 0.0)
+                corners_home.append(match['HC'] if 'HC' in match and pd.notnull(match['HC']) else 0.0)
+                if match['FTR'] == 'H':
+                    form_streak_home += 1
+                elif match['FTR'] == 'D':
+                    form_streak_home += 0.5
+                else:
+                    form_streak_home -= 1
+            else:
+                goals_scored_home.append(match['FTAG'])
+                goals_conceded_home.append(match['FTHG'])
+                shots_on_target_home.append(match['AST'] if 'AST' in match and pd.notnull(match['AST']) else 0.0)
+                corners_home.append(match['AC'] if 'AC' in match and pd.notnull(match['AC']) else 0.0)
+                if match['FTR'] == 'A':
+                    form_streak_home += 1
+                elif match['FTR'] == 'D':
+                    form_streak_home += 0.5
+                else:
+                    form_streak_home -= 1
+        historical_df.loc[idx, 'HomeRecentFormGoalsScored'] = np.mean(goals_scored_home) if goals_scored_home else 0.0
+        historical_df.loc[idx, 'HomeGoalDiffRolling'] = (np.mean(goals_scored_home) - np.mean(goals_conceded_home)) if goals_scored_home and goals_conceded_home else 0.0
+        historical_df.loc[idx, 'HomeRecentDrawRate'] = sum(1 for x in past_matches_home['FTR'] if x == 'D') / max(1, len(past_matches_home)) if not past_matches_home.empty else 0.0
+        historical_df.loc[idx, 'HomeHistoricalDrawRate'] = sum(1 for x in past_home_long['FTR'] if x == 'D') / max(1, len(past_home_long)) if not past_home_long.empty else 0.0
+        historical_df.loc[idx, 'HomeDrawRate10'] = sum(1 for x in past_home_long['FTR'] if x == 'D') / max(1, len(past_home_long)) if not past_home_long.empty else 0.0
+        historical_df.loc[idx, 'HomeShotsOnTarget'] = np.mean(shots_on_target_home) if shots_on_target_home else 0.0
+        historical_df.loc[idx, 'HomeCorners'] = np.mean(corners_home) if corners_home else 0.0
+        historical_df.loc[idx, 'HomeGoalsConcededRolling'] = np.mean(goals_conceded_home) if goals_conceded_home else 0.0
+        historical_df.loc[idx, 'HomeFatigue'] = len(past_home_fatigue)
+        historical_df.loc[idx, 'HomeFormStreak'] = form_streak_home
+        historical_df.loc[idx, 'HomeGoalEfficiency'] = (np.mean(goals_scored_home) / np.mean(shots_on_target_home)) if shots_on_target_home and np.mean(shots_on_target_home) > 0 else 0.0
+
+        # For away team
+        goals_scored_away = []
+        goals_conceded_away = []
+        shots_on_target_away = []
+        corners_away = []
+        form_streak_away = 0
+        for _, match in past_matches_away.iterrows():
+            if match['AwayTeam'] == team_away:
+                goals_scored_away.append(match['FTAG'])
+                goals_conceded_away.append(match['FTHG'])
+                shots_on_target_away.append(match['AST'] if 'AST' in match and pd.notnull(match['AST']) else 0.0)
+                corners_away.append(match['AC'] if 'AC' in match and pd.notnull(match['AC']) else 0.0)
+                if match['FTR'] == 'A':
+                    form_streak_away += 1
+                elif match['FTR'] == 'D':
+                    form_streak_away += 0.5
+                else:
+                    form_streak_away -= 1
+            else:
+                goals_scored_away.append(match['FTHG'])
+                goals_conceded_away.append(match['FTAG'])
+                shots_on_target_away.append(match['HST'] if 'HST' in match and pd.notnull(match['HST']) else 0.0)
+                corners_away.append(match['HC'] if 'HC' in match and pd.notnull(match['HC']) else 0.0)
+                if match['FTR'] == 'H':
+                    form_streak_away += 1
+                elif match['FTR'] == 'D':
+                    form_streak_away += 0.5
+                else:
+                    form_streak_away -= 1
+        historical_df.loc[idx, 'AwayRecentFormGoalsScored'] = np.mean(goals_scored_away) if goals_scored_away else 0.0
+        historical_df.loc[idx, 'AwayGoalDiffRolling'] = (np.mean(goals_scored_away) - np.mean(goals_conceded_away)) if goals_scored_away and goals_conceded_away else 0.0
+        historical_df.loc[idx, 'AwayRecentDrawRate'] = sum(1 for x in past_matches_away['FTR'] if x == 'D') / max(1, len(past_matches_away)) if not past_matches_away.empty else 0.0
+        historical_df.loc[idx, 'AwayHistoricalDrawRate'] = sum(1 for x in past_away_long['FTR'] if x == 'D') / max(1, len(past_away_long)) if not past_away_long.empty else 0.0
+        historical_df.loc[idx, 'AwayDrawRate10'] = sum(1 for x in past_away_long['FTR'] if x == 'D') / max(1, len(past_away_long)) if not past_away_long.empty else 0.0
+        historical_df.loc[idx, 'AwayGoalsConcededRolling'] = np.mean(goals_conceded_away) if goals_conceded_away else 0.0
+        historical_df.loc[idx, 'AwayShotsOnTarget'] = np.mean(shots_on_target_away) if shots_on_target_away else 0.0
+        historical_df.loc[idx, 'AwayCorners'] = np.mean(corners_away) if corners_away else 0.0
+        historical_df.loc[idx, 'AwayFatigue'] = len(past_away_fatigue)
+        historical_df.loc[idx, 'AwayFormStreak'] = form_streak_away
+        historical_df.loc[idx, 'AwayGoalEfficiency'] = (np.mean(goals_scored_away) / np.mean(shots_on_target_away)) if shots_on_target_away and np.mean(shots_on_target_away) > 0 else 0.0
+
+        # Rest (days since last match)
+        past_home_all = historical_df[(historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)]
+        past_home_all = past_home_all[past_home_all['Date'] < match_date].tail(1)
+        past_away_all = historical_df[(historical_df['HomeTeam'] == team_away) | (historical_df['AwayTeam'] == team_away)]
+        past_away_all = past_away_all[past_away_all['Date'] < match_date].tail(1)
+        if not past_home_all.empty:
+            last_match_date = past_home_all['Date'].iloc[0]
+            historical_df.loc[idx, 'HomeDaysSinceLastMatch'] = (match_date - last_match_date).days
+        else:
+            historical_df.loc[idx, 'HomeDaysSinceLastMatch'] = 30
+        if not past_away_all.empty:
+            last_match_date = past_away_all['Date'].iloc[0]
+            historical_df.loc[idx, 'AwayDaysSinceLastMatch'] = (match_date - last_match_date).days
+        else:
+            historical_df.loc[idx, 'AwayDaysSinceLastMatch'] = 30
+
+    for idx, row in df.iterrows():
+        match_date = row['Date']
+        team_home = row['HomeTeam']
+        team_away = row['AwayTeam']
+        past_matches_home = historical_df[((historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)) & 
+                                          (historical_df['Date'] < match_date)].tail(3)
+        past_matches_away = historical_df[((historical_df['HomeTeam'] == team_away) | (historical_df['AwayTeam'] == team_away)) & 
+                                          (historical_df['Date'] < match_date)].tail(3)
+        past_home_long = historical_df[((historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)) & 
+                                       (historical_df['Date'] < match_date)].tail(10)
+        past_away_long = historical_df[((historical_df['AwayTeam'] == team_away) | (historical_df['HomeTeam'] == team_away)) & 
+                                       (historical_df['Date'] < match_date)].tail(10)
+        past_home_fatigue = historical_df[((historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)) & 
+                                          (historical_df['Date'] < match_date) & 
+                                          ((match_date - historical_df['Date']).dt.days <= 14)]
+        past_away_fatigue = historical_df[((historical_df['HomeTeam'] == team_away) | (historical_df['AwayTeam'] == team_away)) & 
+                                          (historical_df['Date'] < match_date) & 
+                                          ((match_date - historical_df['Date']).dt.days <= 14)]
+        goals_scored_home = []
+        goals_conceded_home = []
+        shots_on_target_home = []
+        corners_home = []
+        form_streak_home = 0
+        for _, match in past_matches_home.iterrows():
+            if match['HomeTeam'] == team_home:
+                goals_scored_home.append(match['FTHG'])
+                goals_conceded_home.append(match['FTAG'])
+                shots_on_target_home.append(match['HST'] if 'HST' in match and pd.notnull(match['HST']) else 0.0)
+                corners_home.append(match['HC'] if 'HC' in match and pd.notnull(match['HC']) else 0.0)
+                if match['FTR'] == 'H':
+                    form_streak_home += 1
+                elif match['FTR'] == 'D':
+                    form_streak_home += 0.5
+                else:
+                    form_streak_home -= 1
+            else:
+                goals_scored_home.append(match['FTAG'])
+                goals_conceded_home.append(match['FTHG'])
+                shots_on_target_home.append(match['AST'] if 'AST' in match and pd.notnull(match['AST']) else 0.0)
+                corners_home.append(match['AC'] if 'AC' in match and pd.notnull(match['AC']) else 0.0)
+                if match['FTR'] == 'A':
+                    form_streak_home += 1
+                elif match['FTR'] == 'D':
+                    form_streak_home += 0.5
+                else:
+                    form_streak_home -= 1
+        df.loc[idx, 'HomeRecentFormGoalsScored'] = np.mean(goals_scored_home) if goals_scored_home else 0.0
+        df.loc[idx, 'HomeGoalDiffRolling'] = (np.mean(goals_scored_home) - np.mean(goals_conceded_home)) if goals_scored_home and goals_conceded_home else 0.0
+        df.loc[idx, 'HomeRecentDrawRate'] = sum(1 for x in past_matches_home['FTR'] if x == 'D') / max(1, len(past_matches_home)) if not past_matches_home.empty else 0.0
+        df.loc[idx, 'HomeHistoricalDrawRate'] = sum(1 for x in past_home_long['FTR'] if x == 'D') / max(1, len(past_home_long)) if not past_home_long.empty else 0.0
+        df.loc[idx, 'HomeDrawRate10'] = sum(1 for x in past_home_long['FTR'] if x == 'D') / max(1, len(past_home_long)) if not past_home_long.empty else 0.0
+        df.loc[idx, 'HomeShotsOnTarget'] = np.mean(shots_on_target_home) if shots_on_target_home else 0.0
+        df.loc[idx, 'HomeCorners'] = np.mean(corners_home) if corners_home else 0.0
+        df.loc[idx, 'HomeGoalsConcededRolling'] = np.mean(goals_conceded_home) if goals_conceded_home else 0.0
+        df.loc[idx, 'HomeFatigue'] = len(past_home_fatigue)
+        df.loc[idx, 'HomeFormStreak'] = form_streak_home
+        df.loc[idx, 'HomeGoalEfficiency'] = (np.mean(goals_scored_home) / np.mean(shots_on_target_home)) if shots_on_target_home and np.mean(shots_on_target_home) > 0 else 0.0
+
+        goals_scored_away = []
+        goals_conceded_away = []
+        shots_on_target_away = []
+        corners_away = []
+        form_streak_away = 0
+        for _, match in past_matches_away.iterrows():
+            if match['AwayTeam'] == team_away:
+                goals_scored_away.append(match['FTAG'])
+                goals_conceded_away.append(match['FTHG'])
+                shots_on_target_away.append(match['AST'] if 'AST' in match and pd.notnull(match['AST']) else 0.0)
+                corners_away.append(match['AC'] if 'AC' in match and pd.notnull(match['AC']) else 0.0)
+                if match['FTR'] == 'A':
+                    form_streak_away += 1
+                elif match['FTR'] == 'D':
+                    form_streak_away += 0.5
+                else:
+                    form_streak_away -= 1
+            else:
+                goals_scored_away.append(match['FTHG'])
+                goals_conceded_away.append(match['FTAG'])
+                shots_on_target_away.append(match['HST'] if 'HST' in match and pd.notnull(match['HST']) else 0.0)
+                corners_away.append(match['HC'] if 'HC' in match and pd.notnull(match['HC']) else 0.0)
+                if match['FTR'] == 'H':
+                    form_streak_away += 1
+                elif match['FTR'] == 'D':
+                    form_streak_away += 0.5
+                else:
+                    form_streak_away -= 1
+        df.loc[idx, 'AwayRecentFormGoalsScored'] = np.mean(goals_scored_away) if goals_scored_away else 0.0
+        df.loc[idx, 'AwayGoalDiffRolling'] = (np.mean(goals_scored_away) - np.mean(goals_conceded_away)) if goals_scored_away and goals_conceded_away else 0.0
+        df.loc[idx, 'AwayRecentDrawRate'] = sum(1 for x in past_matches_away['FTR'] if x == 'D') / max(1, len(past_matches_away)) if not past_matches_away.empty else 0.0
+        df.loc[idx, 'AwayHistoricalDrawRate'] = sum(1 for x in past_away_long['FTR'] if x == 'D') / max(1, len(past_away_long)) if not past_away_long.empty else 0.0
+        df.loc[idx, 'AwayDrawRate10'] = sum(1 for x in past_away_long['FTR'] if x == 'D') / max(1, len(past_away_long)) if not past_away_long.empty else 0.0
+        df.loc[idx, 'AwayGoalsConcededRolling'] = np.mean(goals_conceded_away) if goals_conceded_away else 0.0
+        df.loc[idx, 'AwayShotsOnTarget'] = np.mean(shots_on_target_away) if shots_on_target_away else 0.0
+        df.loc[idx, 'AwayCorners'] = np.mean(corners_away) if corners_away else 0.0
+        df.loc[idx, 'AwayFatigue'] = len(past_away_fatigue)
+        df.loc[idx, 'AwayFormStreak'] = form_streak_away
+        df.loc[idx, 'AwayGoalEfficiency'] = (np.mean(goals_scored_away) / np.mean(shots_on_target_away)) if shots_on_target_away and np.mean(shots_on_target_away) > 0 else 0.0
+
+        past_home_all = historical_df[(historical_df['HomeTeam'] == team_home) | (historical_df['AwayTeam'] == team_home)]
+        past_home_all = past_home_all[past_home_all['Date'] < match_date].tail(1)
+        past_away_all = historical_df[(historical_df['HomeTeam'] == team_away) | (historical_df['AwayTeam'] == team_away)]
+        past_away_all = past_away_all[past_away_all['Date'] < match_date].tail(1)
+        if not past_home_all.empty:
+            last_match_date = past_home_all['Date'].iloc[0]
+            df.loc[idx, 'HomeDaysSinceLastMatch'] = (match_date - last_match_date).days
+        else:
+            df.loc[idx, 'HomeDaysSinceLastMatch'] = 30
+        if not past_away_all.empty:
+            last_match_date = past_away_all['Date'].iloc[0]
+            df.loc[idx, 'AwayDaysSinceLastMatch'] = (match_date - last_match_date).days
+        else:
+            df.loc[idx, 'AwayDaysSinceLastMatch'] = 30
+
+    # Team-specific betting odds imputation
+    for col in ['B365H', 'B365D', 'B365A']:
+        if col in historical_df.columns:
+            team_averages = historical_df.groupby('HomeTeam')[col].mean().to_dict()
+            if col not in df.columns:
+                df[col] = df['HomeTeam'].map(team_averages).fillna(historical_df[col].mean())
+            else:
+                df[col] = df.apply(
+                    lambda row: row[col] if pd.notnull(row[col]) else team_averages.get(row['HomeTeam'], historical_df[col].mean()),
+                    axis=1
+                )
+        else:
+            df[col] = 0
+
+    # One-hot encoding
+    df = pd.get_dummies(df, columns=['HomeTeam', 'AwayTeam'], prefix=['Home', 'Away'])
+    for team in all_teams:
+        if f'Home_{team}' not in df.columns:
+            df[f'Home_{team}'] = 0
+        if f'Away_{team}' not in df.columns:
+            df[f'Away_{team}'] = 0
+
+    return df
+
+# Function to prepare data with advanced feature selection
+def prepare_data(df, feature_cols, scaler=None, le_target=None, is_training=True, selected_features=None):
+    if is_training:
+        X = df[feature_cols].fillna(0).astype('float32')
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        X_scaled = pd.DataFrame(X_scaled, columns=feature_cols, index=df.index)  # Preserve index
+        y = df['FTR']
+        le_target = LabelEncoder()
+        y_encoded = le_target.fit_transform(y)
+
+        # Log unique classes in y_encoded
+        logging.info(f"Unique classes in y_encoded: {np.unique(y_encoded)}")
+
+        # Remove highly correlated features
+        corr_matrix = X_scaled.corr().abs()
+        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        to_drop = [column for column in upper.columns if any(upper[column] > 0.9)]
+        X_scaled = X_scaled.drop(columns=to_drop)
+        logging.info(f"Dropped highly correlated features: {to_drop}")
+
+        # Ensure no NaN values in X_scaled
+        if X_scaled.isna().any().any():
+            logging.warning("NaN values found in X_scaled after scaling. Filling with 0.")
+            X_scaled = X_scaled.fillna(0)
+
+        # Feature selection using SHAP
+        rf = RandomForestClassifier(random_state=42, n_estimators=50)
+        rf.fit(X_scaled, y_encoded)
+
+        try:
+            explainer = shap.TreeExplainer(rf)
+            shap_values = explainer.shap_values(X_scaled)
+            logging.info(f"Number of SHAP value arrays (should match number of classes): {len(shap_values)}")
+            for i, sv in enumerate(shap_values):
+                logging.info(f"Class {i} SHAP values shape: {sv.shape}")
+            
+            # Compute mean absolute SHAP value per feature across all classes
+            # shap_values is a list of arrays, each of shape (n_samples, n_features)
+            shap_sum = np.mean([np.abs(sv).mean(axis=0) for sv in shap_values], axis=0)  # Average over classes
+            feature_importance = pd.Series(shap_sum, index=X_scaled.columns)
+            selected_features = feature_importance.nlargest(30).index.tolist()
+        except Exception as e:
+            logging.warning(f"SHAP feature selection failed: {e}. Falling back to RandomForest feature importance.")
+            feature_importance = pd.Series(rf.feature_importances_, index=X_scaled.columns)
+            selected_features = feature_importance.nlargest(30).index.tolist()
+
+        X_selected = X_scaled[selected_features]
+
+        # Check class distribution before oversampling
+        class_counts = pd.Series(y_encoded).value_counts()
+        logging.info("Class distribution before oversampling:")
+        logging.info(class_counts)
+
+        # Store original indices before SMOTE
+        original_indices = df.index
+        n_original = len(X_selected)
+
+        # Apply SMOTE if there are enough samples in the minority class
+        if class_counts.min() >= 5:
+            smote = SMOTE(sampling_strategy='auto', random_state=42, k_neighbors=min(5, class_counts.min() - 1))
+            X_balanced, y_balanced = smote.fit_resample(X_selected, y_encoded)
+            logging.info("Target distribution after SMOTE:")
+            logging.info(pd.Series(y_balanced).value_counts(normalize=True))
+        else:
+            logging.warning("Not enough samples in minority class for oversampling. Skipping SMOTE.")
+            X_balanced, y_balanced = X_selected, y_encoded
+
+        # Create a DataFrame for X_balanced with the new indices
+        X_balanced = pd.DataFrame(X_balanced, columns=selected_features)
+
+        # Create a mask to identify original samples (before SMOTE)
+        is_original = np.ones(len(X_balanced), dtype=bool)
+        is_original[n_original:] = False  # Synthetic samples are False
+
+        # Calculate historical draw rate
+        draw_rate = (y == 'D').mean()
+        logging.info(f"Historical draw rate: {draw_rate:.3f}")
+
+        return X_balanced, y_balanced, scaler, le_target, selected_features, draw_rate, original_indices, is_original
+    else:
+        X = df[feature_cols].fillna(0).astype('float32')
+        X_scaled = scaler.transform(X)
+        X_scaled_df = pd.DataFrame(X_scaled, columns=feature_cols, index=df.index)  # Preserve index
+        X_selected = X_scaled_df[selected_features]
+        return X_selected, scaler, selected_features
+
+# Function to adjust predictions with dynamic draw threshold
+def adjust_predictions(predictions, probabilities, draw_rate, position_diffs):
+    draw_probs = probabilities[:, 1]
+    for i in range(len(predictions)):
+        probs = probabilities[i]
+        max_prob = np.max(probs)
+        # Dynamic threshold based on PositionDiff
+        threshold = 0.005 if position_diffs[i] <= 5 else 0.01
+        if probs[1] >= max_prob - threshold:
+            predictions[i] = 1
+    # Ensure draw rate aligns with historical data
+    sorted_indices = np.argsort(draw_probs)[::-1]
+    num_draws = int(len(predictions) * draw_rate)
+    predictions[sorted_indices[:num_draws]] = 1
+    return predictions
+
+# Function to train the model with an ensemble
+def train_model(X, y):
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    class_weights = compute_class_weight('balanced', classes=np.unique(y), y=y)
+    class_weight_dict = dict(zip(np.unique(y), class_weights))
+    class_weight_dict[0] *= 1.2  # Slightly increase weight for away wins
+    class_weight_dict[1] *= 8.0  # Further increase weight for draws
+
+    # Custom scorer for draw class (label 1)
+    def draw_f1_score(y_true, y_pred):
+        return f1_score(y_true, y_pred, labels=[1], average='weighted', zero_division=0)
+    draw_scorer = make_scorer(draw_f1_score)
+
+    # XGBoost with early stopping
+    xgb = XGBClassifier(random_state=42, eval_metric='mlogloss', early_stopping_rounds=10)
+    xgb_param_grid = {
+        'n_estimators': [50, 100],
+        'max_depth': [3, 5],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'reg_alpha': [0, 0.1, 0.5, 1.0],
+        'reg_lambda': [0, 0.1, 0.5, 1.0],
+        'subsample': [0.6, 0.8, 1.0],
+        'colsample_bytree': [0.6, 0.8, 1.0]
+    }
+    xgb_grid = RandomizedSearchCV(xgb, xgb_param_grid, cv=5, scoring=draw_scorer, n_iter=10, random_state=42, n_jobs=-1)
+    xgb_grid.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    logging.info(f"Best XGBoost params: {xgb_grid.best_params_}")
+
+    # LightGBM
+    lgbm = LGBMClassifier(random_state=42, verbose=-1)
+    lgbm_param_grid = {
+        'n_estimators': [50, 100],
+        'max_depth': [3, 5],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'reg_alpha': [0, 0.1, 0.5, 1.0],
+        'reg_lambda': [0, 0.1, 0.5, 1.0],
+        'subsample': [0.6, 0.8, 1.0],
+        'colsample_bytree': [0.6, 0.8, 1.0],
+        'num_leaves': [20, 31]
+    }
+    lgbm_grid = RandomizedSearchCV(lgbm, lgbm_param_grid, cv=5, scoring=draw_scorer, n_iter=10, random_state=42, n_jobs=-1)
+    lgbm_grid.fit(X_train, y_train)
+    logging.info(f"Best LightGBM params: {lgbm_grid.best_params_}")
+
+    # Neural Network
+    mlp = MLPClassifier(random_state=42, max_iter=2000)  # Increased max_iter to avoid convergence warning
+    mlp_param_grid = {
+        'hidden_layer_sizes': [(50,), (100,), (50, 50)],
+        'learning_rate_init': [0.001, 0.01],
+        'alpha': [0.0001, 0.001]
+    }
+    mlp_grid = RandomizedSearchCV(mlp, mlp_param_grid, cv=5, scoring=draw_scorer, n_iter=5, random_state=42, n_jobs=-1)
+    mlp_grid.fit(X_train, y_train)
+    logging.info(f"Best MLP params: {mlp_grid.best_params_}")
+
+    # Create base models with best parameters
+    best_xgb = XGBClassifier(**xgb_grid.best_params_, random_state=42, eval_metric='mlogloss')
+    best_lgbm = LGBMClassifier(**lgbm_grid.best_params_, random_state=42, verbose=-1)
+    best_mlp = MLPClassifier(**mlp_grid.best_params_, random_state=42, max_iter=2000)
+
+    # Stacking ensemble with XGBoost, LightGBM, and MLP
+    estimators = [
+        ('xgb', best_xgb),
+        ('lgbm', best_lgbm),
+        ('mlp', best_mlp)
+    ]
+    stacking_model = StackingClassifier(
+        estimators=estimators,
+        final_estimator=LogisticRegression(class_weight='balanced', random_state=42),
+        cv=5,
+        n_jobs=-1
+    )
+    stacking_model.fit(X, y)
+
+    # Calibrate probabilities with Platt scaling
+    calibrated_model = CalibratedClassifierCV(stacking_model, method='sigmoid', cv=7)
+    calibrated_model.fit(X, y)
+
+    # Train a separate draw classifier
+    y_binary = (y == 1).astype(int)  # 1 for Draw, 0 for Not Draw
+    draw_model = RandomForestClassifier(class_weight={0: 1, 1: 8}, random_state=42, n_estimators=50)
+    draw_model.fit(X, y_binary)
+
+    return calibrated_model, draw_model
+
+# Main execution
+if __name__ == "__main__":
+    download_datasets()
+    historical_df_raw = pd.read_csv('E0.csv')
+    historical_df_raw['Date'] = pd.to_datetime(historical_df_raw['Date'], format='%d/%m/%Y', errors='coerce').dt.tz_localize('UTC')
+    historical_df_raw = historical_df_raw.sort_values(by='Date').dropna(subset=['Date', 'FTR', 'HomeTeam', 'AwayTeam'])
+
+    # Try to scrape live standings, fall back to static if failed
+    standings = scrape_standings()
+    if standings is None:
+        logging.warning("Using static standings as scraping failed.")
+        standings = {
+            'Liverpool': 1, 'Arsenal': 2, 'Nott_m_Forest': 3, 'Chelsea': 4, 'Newcastle': 5,
+            'Man_City': 6, 'Aston_Villa': 7, 'Fulham': 8, 'Brighton': 9, 'Bournemouth': 10,
+            'Crystal_Palace': 11, 'Brentford': 12, 'Man_United': 13, 'Tottenham': 14, 'Everton': 15,
+            'West_Ham': 16, 'Wolves': 17, 'Ipswich': 18, 'Leicester': 19, 'Southampton': 20
+        }
+
+    # Fill betting odds in historical data
+    for col in ['B365H', 'B365D', 'B365A']:
+        if col in historical_df_raw.columns:
+            team_averages = historical_df_raw.groupby('HomeTeam')[col].mean()
+            historical_df_raw[col] = historical_df_raw.apply(
+                lambda row: row[col] if pd.notnull(row[col]) else team_averages.get(row['HomeTeam'], historical_df_raw[col].mean()),
+                axis=1
+            )
+
+    # Define feature columns
+    historical_df_for_features = create_features(historical_df_raw, historical_df_raw, standings, is_training=True)
+    feature_cols_train = [col for col in historical_df_for_features.columns if col.startswith('Home_') or col.startswith('Away_') or col in [
+        'HomeRecentFormGoalsScored', 'AwayRecentFormGoalsScored', 'B365H', 'B365D', 'B365A', 
+        'H2H_Home_Win', 'H2H_Draw', 'H2H_Away_Win', 'HomeAdvantage', 'HomeGoalDiffRolling', 
+        'AwayGoalDiffRolling', 'HomeRecentDrawRate', 'AwayRecentDrawRate', 
+        'HomeHistoricalDrawRate', 'AwayHistoricalDrawRate',
+        'HomeTeamPosition', 'AwayTeamPosition', 'PositionDiff',
+        'HomeGoalsConcededRolling', 'AwayGoalsConcededRolling',
+        'HomeDaysSinceLastMatch', 'AwayDaysSinceLastMatch',
+        'HomeDrawRate10', 'AwayDrawRate10',
+        'HomeShotsOnTarget', 'AwayShotsOnTarget', 'HomeCorners', 'AwayCorners',
+        'HomeFatigue', 'AwayFatigue', 'HomeFormStreak', 'AwayFormStreak',
+        'HomeGoalEfficiency', 'AwayGoalEfficiency'
+    ]]
+
+    # Adjust train-test split to ensure enough data for training
+    train_data = historical_df_raw.iloc[:-20]
+    test_data = historical_df_raw.iloc[-20:]
+
+    # Prepare training data
+    train_data = create_features(historical_df_raw, train_data, standings, is_training=True)
+    X_train, y_train, scaler, le_target, selected_features, draw_rate, original_indices, is_original = prepare_data(train_data, feature_cols_train, is_training=True)
+
+    # Train the model
+    model, draw_model = train_model(X_train, y_train)
+    joblib.dump(model, 'match_predictor.pkl')
+    joblib.dump(draw_model, 'draw_model.pkl')
+    joblib.dump(scaler, 'scaler.pkl')
+    joblib.dump(le_target, 'target_encoder.pkl')
+    joblib.dump(selected_features, 'selected_features.pkl')
+
+    # Cross-validation
+    n_splits = 5
+    test_size = min(50, len(X_train) // (n_splits + 1))  # Ensure reasonable test_size
+    tscv = TimeSeriesSplit(n_splits=n_splits, test_size=test_size)
+    cv_scores = []
+
+    # Create a mapping from X_train indices to original indices
+    index_mapping = pd.Series(original_indices, index=np.arange(len(original_indices)))
+
+    # Filter indices to only include original samples
+    original_sample_indices = np.where(is_original)[0]
+
+    for train_idx, val_idx in tscv.split(X_train):
+        # Only use validation indices that correspond to original samples
+        val_idx = val_idx[np.isin(val_idx, original_sample_indices)]
+        if len(val_idx) == 0:
+            logging.warning("No original samples in validation set for this fold. Skipping.")
+            continue
+
+        train_idx = train_idx[np.isin(train_idx, original_sample_indices)]
+        if len(train_idx) == 0:
+            logging.warning("No original samples in training set for this fold. Skipping.")
+            continue
+
+        X_t, X_v = X_train.iloc[train_idx], X_train.iloc[val_idx]
+        y_t, y_v = y_train[train_idx], y_train[val_idx]
+
+        # Map the validation indices back to the original indices
+        val_original_indices = index_mapping.iloc[val_idx].values
+        position_diffs = train_data.loc[val_original_indices, 'PositionDiff'].values
+
+        model.fit(X_t, y_t)
+        y_pred = model.predict(X_v)
+        probs = model.predict_proba(X_v)
+        y_pred = adjust_predictions(y_pred, probs, draw_rate=draw_rate, position_diffs=position_diffs)
+        cv_scores.append(accuracy_score(y_v, y_pred))
+    logging.info(f"Cross-Validation Accuracy: {np.mean(cv_scores):.2f} ± {np.std(cv_scores):.2f}")
+
+    # Prepare and predict on test data
+    test_data = create_features(historical_df_raw, test_data, standings, is_training=False)
+    X_test, _, _ = prepare_data(test_data, feature_cols_train, scaler, le_target, is_training=False, selected_features=selected_features)
+    y_test = le_target.transform(test_data['FTR'])
+    predictions = model.predict(X_test)
+    probabilities_test = model.predict_proba(X_test)
+    draw_probs = draw_model.predict_proba(X_test)[:, 1]
+    position_diffs = test_data['PositionDiff'].values
+    predictions = adjust_predictions(predictions, probabilities_test, draw_rate=draw_rate, position_diffs=position_diffs)
+    # Override with draw model if confident
+    predictions[draw_probs > 0.5] = 1
+    accuracy = accuracy_score(y_test, predictions)
+    logging.info(f"Backtesting Accuracy: {accuracy:.2f}")
+    logging.info("\nClassification Report:")
+    logging.info(classification_report(y_test, predictions, target_names=le_target.classes_, zero_division=0))
+    logging.info("\nConfusion Matrix:")
+    logging.info(confusion_matrix(y_test, predictions))
+    logging.info("\nLog Loss:")
+    logging.info(log_loss(y_test, probabilities_test))
+    test_data['Actual'] = test_data['FTR']
+    test_data['Prediction'] = le_target.inverse_transform(predictions)
+    test_data['Prob_Away'] = probabilities_test[:, 0]
+    test_data['Prob_Draw'] = probabilities_test[:, 1]
+    test_data['Prob_Home'] = probabilities_test[:, 2]
+    logging.info("\nDetailed Backtest Predictions:")
+    logging.info(test_data[['Date', 'OriginalHomeTeam', 'OriginalAwayTeam', 'Actual', 'Prediction', 'Prob_Away', 'Prob_Draw', 'Prob_Home']])
+
+    # Predict today's matches
+    upcoming_df = pd.read_csv('epl-2024-GMTStandardTime.csv')
+    if 'Date' not in upcoming_df.columns:
+        logging.error("Missing 'Date' column in upcoming_df.")
+        raise KeyError("Missing 'Date' column in upcoming_df.")
+    upcoming_df['Date'] = pd.to_datetime(upcoming_df['Date'], format='%d/%m/%Y %H:%M', errors='coerce').dt.tz_localize('UTC')
+    current_time = pd.Timestamp.now(tz='UTC')
+    today = current_time.date()
+    today_matches = upcoming_df[upcoming_df['Date'].dt.date == today]
+    
+    if not today_matches.empty:
+        today_matches.columns = today_matches.columns.str.replace('Home Team', 'HomeTeam').str.replace('Away Team', 'AwayTeam')
+        today_matches = create_features(historical_df_raw, today_matches, standings, is_training=False)
+        X_today, _, _ = prepare_data(today_matches, feature_cols_train, scaler, le_target, is_training=False, selected_features=selected_features)
+        today_pred = model.predict(X_today)
+        today_prob = model.predict_proba(X_today)
+        draw_probs_today = draw_model.predict_proba(X_today)[:, 1]
+        position_diffs = today_matches['PositionDiff'].values
+        today_pred = adjust_predictions(today_pred, today_prob, draw_rate=draw_rate, position_diffs=position_diffs)
+        today_pred[draw_probs_today > 0.5] = 1
+        today_matches['Prediction'] = le_target.inverse_transform(today_pred)
+        today_matches['Prob_Away'] = today_prob[:, 0]
+        today_matches['Prob_Draw'] = today_prob[:, 1]
+        today_matches['Prob_Home'] = today_prob[:, 2]
+        logging.info("\nToday's Match Predictions:")
+        logging.info(today_matches[['Date', 'OriginalHomeTeam', 'OriginalAwayTeam', 'Prediction', 'Prob_Away', 'Prob_Draw', 'Prob_Home']])
+    else:
+        logging.info(f"\nNo matches scheduled for today ({today}).")
+
+    # Predict upcoming matches
+    upcoming_df = upcoming_df[upcoming_df['Date'] > current_time].sort_values(by='Date').head(10)
+    if not upcoming_df.empty:
+        upcoming_df.columns = upcoming_df.columns.str.replace('Home Team', 'HomeTeam').str.replace('Away Team', 'AwayTeam')
+        upcoming_df = create_features(historical_df_raw, upcoming_df, standings, is_training=False)
+        X_upcoming, _, _ = prepare_data(upcoming_df, feature_cols_train, scaler, le_target, is_training=False, selected_features=selected_features)
+        upcoming_pred = model.predict(X_upcoming)
+        upcoming_prob = model.predict_proba(X_upcoming)
+        draw_probs_upcoming = draw_model.predict_proba(X_upcoming)[:, 1]
+        position_diffs = upcoming_df['PositionDiff'].values
+        upcoming_pred = adjust_predictions(upcoming_pred, upcoming_prob, draw_rate=draw_rate, position_diffs=position_diffs)
+        upcoming_pred[draw_probs_upcoming > 0.5] = 1
+        upcoming_df['Prediction'] = le_target.inverse_transform(upcoming_pred)
+        upcoming_df['Prob_Away'] = upcoming_prob[:, 0]
+        upcoming_df['Prob_Draw'] = upcoming_prob[:, 1]
+        upcoming_df['Prob_Home'] = upcoming_prob[:, 2]
+        logging.info("\nUpcoming Match Predictions:")
+        logging.info(upcoming_df[['Date', 'OriginalHomeTeam', 'OriginalAwayTeam', 'Prediction', 'Prob_Away', 'Prob_Draw', 'Prob_Home']])
+    else:
+        logging.info("\nNo upcoming matches found.")
