@@ -7,7 +7,12 @@ interface Participant {
   vote?: string | number;
 }
 
-export default function ParticipantCard({ participant, revealed }: { participant: Participant; revealed: boolean }) {
+interface ParticipantCardProps {
+  participant: Participant;
+  revealed: boolean;
+}
+
+export default function ParticipantCard({ participant, revealed }: ParticipantCardProps) {
   return (
     <Card variant="outlined">
       <CardContent>

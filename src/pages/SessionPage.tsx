@@ -4,7 +4,7 @@ import { Container, Typography, Grid, Box, Button, CircularProgress } from '@mui
 import ParticipantCard from '../components/ParticipantCard';
 
 export default function SessionPage() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();  
   const [loading, setLoading] = useState(true);
   const [participants, setParticipants] = useState([]);
   const [revealed, setRevealed] = useState(false);
