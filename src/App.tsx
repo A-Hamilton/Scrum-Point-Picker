@@ -4,8 +4,9 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 
-import { SocketProvider } from './context/SocketContext';       // ← new
+import { SocketProvider } from './context/SocketContext';
 import { SessionProvider } from './context/SessionContext';
+
 import Navbar from './components/Navbar';
 import HomePage from './pages/HomePage';
 import CreateSessionPage from './pages/CreateSessionPage';
@@ -16,17 +17,21 @@ export const ColorModeContext = createContext({ toggleColorMode: () => {} });
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<'light' | 'dark'>('light');
-  const colorMode = useMemo(() => ({
-    toggleColorMode: () => setMode(prev => (prev === 'light' ? 'dark' : 'light')),
-  }), []);
+  const colorMode = useMemo(
+    () => ({
+      toggleColorMode: () => setMode((prev) => (prev === 'light' ? 'dark' : 'light')),
+    }),
+    []
+  );
+
   const theme = useMemo(() => createTheme({ palette: { mode } }), [mode]);
 
   return (
     <ColorModeContext.Provider value={colorMode}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-        <SocketProvider>              {/* Socket.IO connected */}
-          <SessionProvider>           {/* Real-time session context */}
+        <SocketProvider>
+          <SessionProvider>
             <Router>
               <Navbar />
               <Routes>

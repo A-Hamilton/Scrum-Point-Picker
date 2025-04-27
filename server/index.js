@@ -6,7 +6,28 @@ app.use(cors());
 
 const httpServer = require('http').createServer(app);
 const { Server } = require('socket.io');
-const io = new Server(httpServer, { cors: { origin: '*' } });
+const io         = new Server(httpServer, {
+  cors: { origin: '*' }
+});
 
-io.on('connection', (socket) => { console.log('🔌', socket.id); /* … */ });
-httpServer.listen(4000, () => console.log('🚀 on 4000'));
+io.on('connection', (socket) => {
+  console.log('🔌 Client connected:', socket.id);
+
+  socket.on('createSession', ({ id, name, moderator }) => {
+    // ...
+  });
+
+  socket.on('joinSession', ({ id, userName }) => {
+    // ...
+  });
+
+  socket.on('addTicket', ({ sessionId, ticket }) => {
+    // ...
+  });
+
+  // etc...
+});
+
+httpServer.listen(4000, () =>
+  console.log('🚀 Socket.IO server running on http://localhost:4000')
+);

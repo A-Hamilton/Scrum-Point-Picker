@@ -1,5 +1,4 @@
 // src/context/SessionContext.tsx
-
 import React, {
   createContext,
   useContext,
@@ -10,14 +9,12 @@ import React, {
 import { v4 as uuidv4 } from 'uuid';
 import { useSocket } from './SocketContext';
 
-/** A single ticket within a session */
 export interface Ticket {
   id: string;
   title: string;
   votes: Record<string, number | null>;
 }
 
-/** The overall session state */
 export interface Session {
   id: string;
   name: string;
@@ -27,7 +24,6 @@ export interface Session {
   revealed: boolean;
 }
 
-/** The context API exposed to your components */
 export interface SessionContextType {
   sessions: Record<string, Session>;
   createSession: (name: string, moderator: string) => string;
@@ -50,101 +46,78 @@ const SessionContext = createContext<SessionContextType | undefined>(
   undefined
 );
 
-/** Hook to consume the session context */
 export const useSession = (): SessionContextType => {
   const ctx = useContext(SessionContext);
-  if (!ctx) {
-    throw new Error('useSession must be used within a SessionProvider');
-  }
+  if (!ctx) throw new Error('useSession must be used within SessionProvider');
   return ctx;
 };
 
-/** Provider that wraps your app to supply session data and actions */
 export const SessionProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
   const socket = useSocket();
-
-  // All sessions are stored in-memory on the server; we mirror them here.
   const [sessions, setSessions] = useState<Record<string, Session>>({});
 
-  // Subscribe to server events once on mount
+  // Listen for session list and updates
   useEffect(() => {
-    // Initial list of all sessions
     socket.on('sessionList', (list: Record<string, Session>) => {
       setSessions(list);
     });
-    // Updates for a single session
     socket.on('sessionUpdate', (updated: Session) => {
       setSessions((prev) => ({ ...prev, [updated.id]: updated }));
     });
-
     return () => {
       socket.off('sessionList');
       socket.off('sessionUpdate');
     };
   }, [socket]);
 
-  /** Create a new session on the server */
   const createSession = (name: string, moderator: string): string => {
     const id = uuidv4();
-    setSessions(prev => ({
+    // Optimistic insert so SessionPage sees it immediately
+    setSessions((prev) => ({
       ...prev,
-      [id]: { id, name, moderator, participants: [moderator], tickets: [], revealed: false }
+      [id]: { id, name, moderator, participants: [moderator], tickets: [], revealed: false },
     }));
-  
     socket.emit('createSession', { id, name, moderator });
     return id;
   };
-  
 
-  /** Join an existing session room */
-  const joinSession = (sessionId: string, userName: string): void => {
+  const joinSession = (sessionId: string, userName: string) => {
     socket.emit('joinSession', { id: sessionId, userName });
   };
 
-  /** Add a new ticket to a session */
-  const addTicket = (sessionId: string, title: string): void => {
-    const ticket: Ticket = {
-      id: uuidv4(),
-      title,
-      votes: {},
-    };
+  const addTicket = (sessionId: string, title: string) => {
+    const ticket: Ticket = { id: uuidv4(), title, votes: {} };
     socket.emit('addTicket', { sessionId, ticket });
   };
 
-  /** Remove a ticket from a session */
-  const deleteTicket = (sessionId: string, ticketId: string): void => {
+  const deleteTicket = (sessionId: string, ticketId: string) => {
     socket.emit('deleteTicket', { sessionId, ticketId });
   };
 
-  /** Cast or update your vote on a given ticket */
   const castVote = (
     sessionId: string,
     ticketId: string,
     userName: string,
     value: number
-  ): void => {
+  ) => {
     socket.emit('castVote', { sessionId, ticketId, userName, value });
   };
 
-  /** Reveal all votes in the session */
-  const revealVotes = (sessionId: string): void => {
+  const revealVotes = (sessionId: string) => {
     socket.emit('revealVotes', { sessionId });
   };
 
-  /** Reset voting state (clear all votes) */
-  const resetVotes = (sessionId: string): void => {
+  const resetVotes = (sessionId: string) => {
     socket.emit('resetVotes', { sessionId });
   };
 
-  /** Remove a participant from the session */
-  const removeUser = (sessionId: string, userName: string): void => {
+  const removeUser = (sessionId: string, userName: string) => {
     socket.emit('removeUser', { sessionId, userName });
   };
 
-  /** Delete a session entirely */
-  const deleteSession = (sessionId: string): void => {
+  const deleteSession = (sessionId: string) => {
     socket.emit('deleteSession', { sessionId });
   };
 
