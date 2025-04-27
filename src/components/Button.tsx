@@ -15,7 +15,7 @@ const Button: React.FC<ButtonProps> = ({ children, className, ...props }) => (
     }
     {...props}
   >
-    {children}
+    {children} 
   </button>
 );
 
