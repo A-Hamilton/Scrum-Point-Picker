@@ -1,29 +1,24 @@
 import React, { useState, FormEvent } from 'react';
-import {
-  Container,
-  Typography,
-  TextField,
-  Button,
-  Grid,
-  Card,
-  CardContent,
-} from '@mui/material';
+import { Container, Typography, TextField, Button, Grid, Card, CardContent } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useSession } from '../context/SessionContext';
 
 const CreateSessionPage: React.FC = () => {
   const [sessionName, setSessionName] = useState('');
+  const { createSession } = useSession();
   const navigate = useNavigate();
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // TODO: real create logic
-    navigate(`/session/${encodeURIComponent(sessionName)}`);
+    if (!sessionName.trim()) return;
+    const id = createSession(sessionName.trim(), 'Moderator'); // Replace with real username
+    navigate(`/session/${id}`);
   };
 
   return (
     <Container maxWidth="sm" sx={{ mt: 4 }}>
       <Typography variant="h4" gutterBottom>
-        Create Session
+        Create New Session
       </Typography>
       <Card>
         <CardContent>
@@ -40,7 +35,7 @@ const CreateSessionPage: React.FC = () => {
               </Grid>
               <Grid item xs={12}>
                 <Button type="submit" variant="contained" fullWidth>
-                  Create
+                  Create Session
                 </Button>
               </Grid>
             </Grid>

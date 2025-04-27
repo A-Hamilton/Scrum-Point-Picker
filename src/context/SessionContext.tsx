@@ -1,162 +1,216 @@
-// src/context/SessionContext.tsx
-import React, { createContext, useContext, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
-interface Ticket {
+export interface Ticket {
   id: string;
   title: string;
-  votes: { [userName: string]: number | null };
+  votes: Record<string, number | null>;
 }
 
-interface Session {
+export interface Session {
   id: string;
   name: string;
-  tickets: Ticket[];
-  participants: string[];
   moderator: string;
+  participants: string[];
+  tickets: Ticket[];
   revealed: boolean;
 }
 
-interface SessionContextType {
-  sessions: { [id: string]: Session };
+export interface SessionContextType {
+  sessions: Record<string, Session>;
   createSession: (name: string, moderator: string) => string;
   joinSession: (id: string, userName: string) => void;
   addTicket: (sessionId: string, title: string) => void;
-  castVote: (sessionId: string, ticketId: string, userName: string, value: number) => void;
+  deleteTicket: (sessionId: string, ticketId: string) => void;
+  castVote: (
+    sessionId: string,
+    ticketId: string,
+    userName: string,
+    value: number
+  ) => void;
   revealVotes: (sessionId: string) => void;
   resetVotes: (sessionId: string) => void;
   removeUser: (sessionId: string, userName: string) => void;
   deleteSession: (sessionId: string) => void;
 }
 
-const SessionContext = createContext<SessionContextType | undefined>(undefined);
+const SessionContext = createContext<SessionContextType | undefined>(
+  undefined
+);
 
-export const useSession = () => {
-  const context = useContext(SessionContext);
-  if (!context) {
-    throw new Error('useSession must be used within a SessionProvider');
-  }
-  return context;
+export const useSession = (): SessionContextType => {
+  const ctx = useContext(SessionContext);
+  if (!ctx) throw new Error('useSession must be inside SessionProvider');
+  return ctx;
 };
 
-export const SessionProvider: React.FC<React.PropsWithChildren<{}>> = ({ children }) => {
-  const [sessions, setSessions] = useState<{ [id: string]: Session }>({});
+export const SessionProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
+  const [sessions, setSessions] = useState<Record<string, Session>>(() => {
+    const stored = localStorage.getItem('sessions');
+    return stored ? JSON.parse(stored) : {};
+  });
+
+  // persist on every change
+  useEffect(() => {
+    localStorage.setItem('sessions', JSON.stringify(sessions));
+  }, [sessions]);
 
   const createSession = (name: string, moderator: string) => {
-    const id = uuidv4().split('-')[0]; // short id
-    const newSession: Session = {
+    const id = uuidv4();
+    const session: Session = {
       id,
       name,
-      tickets: [],
-      participants: [moderator],
       moderator,
+      participants: [moderator],
+      tickets: [],
       revealed: false,
     };
-    setSessions(prev => ({ ...prev, [id]: newSession }));
+    setSessions((s) => ({ ...s, [id]: session }));
     return id;
   };
 
   const joinSession = (id: string, userName: string) => {
-    setSessions(prev => {
-      const session = prev[id];
-      if (session && !session.participants.includes(userName)) {
-        const updated = { 
-          ...session, 
-          participants: [...session.participants, userName] 
-        };
-        // Initialize votes for existing tickets for this user
-        updated.tickets = updated.tickets.map(ticket => ({
-          ...ticket,
-          votes: { ...ticket.votes, [userName]: null }
-        }));
-        return { ...prev, [id]: updated };
-      }
-      return prev;
+    setSessions((s) => {
+      const session = s[id];
+      if (!session) return s;
+      if (session.participants.includes(userName)) return s;
+      // add user and init votes on existing tickets
+      const updated: Session = {
+        ...session,
+        participants: [...session.participants, userName],
+        tickets: session.tickets.map((t) => ({
+          ...t,
+          votes: { ...t.votes, [userName]: null },
+        })),
+      };
+      return { ...s, [id]: updated };
     });
   };
 
   const addTicket = (sessionId: string, title: string) => {
-    setSessions(prev => {
-      const session = prev[sessionId];
-      if (!session) return prev;
-      const newTicket: Ticket = {
-        id: uuidv4().split('-')[0],
+    setSessions((s) => {
+      const session = s[sessionId];
+      if (!session) return s;
+      const ticket: Ticket = {
+        id: uuidv4(),
         title,
-        votes: {},
+        votes: session.participants.reduce(
+          (acc, u) => ({ ...acc, [u]: null }),
+          {}
+        ),
       };
-      // Set initial votes for all participants to null
-      session.participants.forEach(u => { newTicket.votes[u] = null; });
-      const updated = {
+      const updated: Session = {
         ...session,
-        tickets: [...session.tickets, newTicket],
+        tickets: [...session.tickets, ticket],
         revealed: false,
       };
-      return { ...prev, [sessionId]: updated };
+      return { ...s, [sessionId]: updated };
     });
   };
 
-  const castVote = (sessionId: string, ticketId: string, userName: string, value: number) => {
-    setSessions(prev => {
-      const session = prev[sessionId];
-      if (!session) return prev;
-      const updatedTickets = session.tickets.map(ticket =>
-        ticket.id === ticketId
-          ? { ...ticket, votes: { ...ticket.votes, [userName]: value } }
-          : ticket
+  const deleteTicket = (sessionId: string, ticketId: string) => {
+    setSessions((s) => {
+      const session = s[sessionId];
+      if (!session) return s;
+      const updated: Session = {
+        ...session,
+        tickets: session.tickets.filter((t) => t.id !== ticketId),
+      };
+      return { ...s, [sessionId]: updated };
+    });
+  };
+
+  const castVote = (
+    sessionId: string,
+    ticketId: string,
+    userName: string,
+    value: number
+  ) => {
+    setSessions((s) => {
+      const session = s[sessionId];
+      if (!session) return s;
+      const updatedTickets = session.tickets.map((t) =>
+        t.id === ticketId
+          ? { ...t, votes: { ...t.votes, [userName]: value } }
+          : t
       );
-      const updated = { ...session, tickets: updatedTickets };
-      return { ...prev, [sessionId]: updated };
+      return { ...s, [sessionId]: { ...session, tickets: updatedTickets } };
     });
   };
 
   const revealVotes = (sessionId: string) => {
-    setSessions(prev => {
-      const session = prev[sessionId];
-      if (!session) return prev;
-      return { ...prev, [sessionId]: { ...session, revealed: true } };
+    setSessions((s) => {
+      const session = s[sessionId];
+      if (!session) return s;
+      return { ...s, [sessionId]: { ...session, revealed: true } };
     });
   };
 
   const resetVotes = (sessionId: string) => {
-    setSessions(prev => {
-      const session = prev[sessionId];
-      if (!session) return prev;
-      // Clear all votes back to null
-      const resetTickets = session.tickets.map(ticket => {
-        const clearedVotes: { [u: string]: null } = {};
-        session.participants.forEach(u => (clearedVotes[u] = null));
-        return { ...ticket, votes: clearedVotes };
-      });
-      return { ...prev, [sessionId]: { ...session, tickets: resetTickets, revealed: false } };
+    setSessions((s) => {
+      const session = s[sessionId];
+      if (!session) return s;
+      const cleared = session.tickets.map((t) => ({
+        ...t,
+        votes: Object.keys(t.votes).reduce(
+          (acc, u) => ({ ...acc, [u]: null }),
+          {}
+        ),
+      }));
+      return {
+        ...s,
+        [sessionId]: { ...session, tickets: cleared, revealed: false },
+      };
     });
   };
 
   const removeUser = (sessionId: string, userName: string) => {
-    setSessions(prev => {
-      const session = prev[sessionId];
-      if (!session) return prev;
-      const remaining = session.participants.filter(u => u !== userName);
-      const updatedTickets = session.tickets.map(ticket => {
-        const { [userName]: _, ...restVotes } = ticket.votes;
-        return { ...ticket, votes: restVotes as typeof ticket.votes };
+    setSessions((s) => {
+      const session = s[sessionId];
+      if (!session) return s;
+      const remaining = session.participants.filter((u) => u !== userName);
+      const updatedTickets = session.tickets.map((t) => {
+        const { [userName]: _, ...rest } = t.votes;
+        return { ...t, votes: rest as Record<string, number | null> };
       });
-      return { ...prev, [sessionId]: { ...session, participants: remaining, tickets: updatedTickets } };
+      return {
+        ...s,
+        [sessionId]: { ...session, participants: remaining, tickets: updatedTickets },
+      };
     });
   };
 
   const deleteSession = (sessionId: string) => {
-    setSessions(prev => {
-      const updated = { ...prev };
-      delete updated[sessionId];
-      return updated;
+    setSessions((s) => {
+      const copy = { ...s };
+      delete copy[sessionId];
+      return copy;
     });
   };
 
   return (
-    <SessionContext.Provider value={{
-      sessions, createSession, joinSession, addTicket,
-      castVote, revealVotes, resetVotes, removeUser, deleteSession
-    }}>
+    <SessionContext.Provider
+      value={{
+        sessions,
+        createSession,
+        joinSession,
+        addTicket,
+        deleteTicket,
+        castVote,
+        revealVotes,
+        resetVotes,
+        removeUser,
+        deleteSession,
+      }}
+    >
       {children}
     </SessionContext.Provider>
   );

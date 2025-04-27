@@ -1,24 +1,33 @@
 import React, { useState, FormEvent } from 'react';
-import {
-  Container,
-  Typography,
-  TextField,
-  Button,
-  Grid,
-  Card,
-  CardContent,
-} from '@mui/material';
+import { Container, Typography, TextField, Button, Grid, Card, CardContent, Alert } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useSession } from '../context/SessionContext';
 
 const JoinSessionPage: React.FC = () => {
   const [userName, setUserName] = useState('');
   const [sessionId, setSessionId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const { sessions, joinSession } = useSession();
   const navigate = useNavigate();
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // TODO: real join logic
-    navigate(`/session/${encodeURIComponent(sessionId)}`);
+    setError(null);
+    if (!userName.trim() || !sessionId.trim()) {
+      setError('Name and Session ID are required');
+      return;
+    }
+    const session = sessions[sessionId];
+    if (!session) {
+      setError('Session not found');
+      return;
+    }
+    if (session.participants.includes(userName.trim())) {
+      setError('Name already taken in this session');
+      return;
+    }
+    joinSession(sessionId, userName.trim());
+    navigate(`/session/${sessionId}`);
   };
 
   return (
@@ -26,6 +35,7 @@ const JoinSessionPage: React.FC = () => {
       <Typography variant="h4" gutterBottom>
         Join Session
       </Typography>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Card>
         <CardContent>
           <form onSubmit={handleSubmit} noValidate>
@@ -50,7 +60,7 @@ const JoinSessionPage: React.FC = () => {
               </Grid>
               <Grid item xs={12}>
                 <Button type="submit" variant="contained" fullWidth>
-                  Join
+                  Join Session
                 </Button>
               </Grid>
             </Grid>
