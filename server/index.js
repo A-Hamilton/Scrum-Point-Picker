@@ -1,6 +1,6 @@
 // server/index.js
 const express = require('express');
-const http = require('http');
+const http = require('http').createServer(app);
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
@@ -9,9 +9,7 @@ const app = express();
 app.use(cors());  // Allow React dev server :contentReference[oaicite:6]{index=6}
 
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: '*' }
-});  // Socket.IO server init :contentReference[oaicite:7]{index=7}
+const io = require('socket.io')(http, { cors: { origin: '*' } });
 
 // In-memory sessions store
 const sessions = {};
@@ -78,6 +76,4 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(4000, () => {
-  console.log('🚀 Socket.IO server running on http://localhost:4000');
-});
+http.listen(4000, () => console.log('🚀 Socket.IO server on http://localhost:4000'));
