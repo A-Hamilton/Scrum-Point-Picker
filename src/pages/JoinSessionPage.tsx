@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
-import { Container, Typography, TextField, Button, Box, Grid, Card, CardContent } from '@mui/material';
+import React, { useState, FormEvent } from 'react';
+import {
+  Container,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Card,
+  CardContent,
+} from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 
-export default function JoinSessionPage() {
+const JoinSessionPage: React.FC = () => {
   const [userName, setUserName] = useState('');
   const [sessionId, setSessionId] = useState('');
   const navigate = useNavigate();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // TODO: handle actual join logic (e.g., verify session ID)
-    navigate(`/session/${sessionId}`);
+    // TODO: real join logic
+    navigate(`/session/${encodeURIComponent(sessionId)}`);
   };
 
   return (
@@ -20,7 +28,7 @@ export default function JoinSessionPage() {
       </Typography>
       <Card>
         <CardContent>
-          <Box component="form" onSubmit={handleSubmit} noValidate>
+          <form onSubmit={handleSubmit} noValidate>
             <Grid container spacing={2}>
               <Grid item xs={12}>
                 <TextField
@@ -42,13 +50,15 @@ export default function JoinSessionPage() {
               </Grid>
               <Grid item xs={12}>
                 <Button type="submit" variant="contained" fullWidth>
-                  Join Session
+                  Join
                 </Button>
               </Grid>
             </Grid>
-          </Box>
+          </form>
         </CardContent>
       </Card>
     </Container>
   );
-}
+};
+
+export default JoinSessionPage;

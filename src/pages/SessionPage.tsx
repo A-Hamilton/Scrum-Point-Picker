@@ -1,17 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Container, Typography, Grid, Box, Button, CircularProgress } from '@mui/material';
-import ParticipantCard from '../components/ParticipantCard';
+import {
+  Container,
+  Typography,
+  Grid,
+  Box,
+  Button,
+  CircularProgress,
+} from '@mui/material';
+import ParticipantCard, { Participant } from '../components/ParticipantCard';
 
-export default function SessionPage() {
-  const { id } = useParams<{ id: string }>();  
+const SessionPage: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
   const [loading, setLoading] = useState(true);
-  const [participants, setParticipants] = useState([]);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
-    // TODO: Fetch session data from backend using `id`
-    // Simulate loading
+    // simulate fetch
     setTimeout(() => {
       setParticipants([
         { name: 'Alice', voted: true, vote: 5 },
@@ -21,52 +27,33 @@ export default function SessionPage() {
     }, 1000);
   }, [id]);
 
-  const handleReveal = () => {
-    setRevealed(true);
-  };
-
-  const handleRestart = () => {
-    setRevealed(false);
+  const handleVote = (value: number) => {
     setParticipants((prev) =>
-      prev.map((p) => ({ ...p, voted: false, vote: null }))
-    );
-  };
-
-  const handleVote = (value) => {
-    // TODO: Submit vote for current user
-    // For demo, mark first participant as voted
-    setParticipants((prev) =>
-      prev.map((p, idx) =>
-        idx === 0 ? { ...p, voted: true, vote: value } : p
+      prev.map((p, i) =>
+        i === 0 ? { ...p, voted: true, vote: value } : p
       )
     );
   };
 
-  if (loading) {
+  if (loading)
     return (
       <Container sx={{ mt: 4, textAlign: 'center' }}>
         <CircularProgress />
-        <Typography>Loading session...</Typography>
       </Container>
     );
-  }
 
   return (
     <Container sx={{ mt: 4 }}>
       <Typography variant="h4" gutterBottom>
-        Session ID: {id}
+        Session: {id}
       </Typography>
-      <Typography variant="body1" gutterBottom>
-        Invite others to join this session using the session ID above.
-      </Typography>
-
       {participants.length === 0 ? (
         <Typography>No participants yet</Typography>
       ) : (
         <Grid container spacing={2}>
-          {participants.map((participant, index) => (
-            <Grid item xs={12} md={4} key={index}>
-              <ParticipantCard participant={participant} revealed={revealed} />
+          {participants.map((p, idx) => (
+            <Grid item xs={12} md={4} key={idx}>
+              <ParticipantCard participant={p} revealed={revealed} />
             </Grid>
           ))}
         </Grid>
@@ -75,16 +62,16 @@ export default function SessionPage() {
       <Box sx={{ mt: 4 }}>
         {!revealed && (
           <>
-            <Typography variant="h6">Select Your Vote</Typography>
+            <Typography variant="h6">Cast Your Vote</Typography>
             <Grid container spacing={1} sx={{ mt: 1 }}>
-              {[1, 2, 3, 5, 8, 13].map((point) => (
-                <Grid item key={point}>
+              {[1, 2, 3, 5, 8, 13].map((v) => (
+                <Grid item key={v}>
                   <Button
                     variant="contained"
-                    onClick={() => handleVote(point)}
+                    onClick={() => handleVote(v)}
                     disabled={revealed}
                   >
-                    {point}
+                    {v}
                   </Button>
                 </Grid>
               ))}
@@ -92,14 +79,25 @@ export default function SessionPage() {
           </>
         )}
         <Box sx={{ mt: 2 }}>
-          <Button variant="outlined" onClick={handleReveal} sx={{ mr: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={() => setRevealed(true)}
+            sx={{ mr: 2 }}
+          >
             Reveal Votes
           </Button>
-          <Button variant="outlined" onClick={handleRestart}>
-            Restart Session
+          <Button variant="outlined" onClick={() => {
+            setRevealed(false);
+            setParticipants((prev) =>
+              prev.map((p) => ({ ...p, voted: false, vote: null }))
+            );
+          }}>
+            Restart
           </Button>
         </Box>
       </Box>
     </Container>
   );
-}
+};
+
+export default SessionPage;

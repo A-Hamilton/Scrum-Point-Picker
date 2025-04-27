@@ -1,29 +1,35 @@
-import React, { useState } from 'react';
-import { Container, Typography, TextField, Button, Box, Card, CardContent, Grid } from '@mui/material';
+import React, { useState, FormEvent } from 'react';
+import {
+  Container,
+  Typography,
+  TextField,
+  Button,
+  Grid,
+  Card,
+  CardContent,
+} from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 
-export default function CreateSessionPage() {
+const CreateSessionPage: React.FC = () => {
   const [sessionName, setSessionName] = useState('');
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // TODO: handle actual session creation logic (e.g., call API)
-    const dummySessionId = '12345'; // Example session ID
-    navigate(`/session/${dummySessionId}`);
+    // TODO: real create logic
+    navigate(`/session/${encodeURIComponent(sessionName)}`);
   };
-
 
   return (
     <Container maxWidth="sm" sx={{ mt: 4 }}>
       <Typography variant="h4" gutterBottom>
-        Create New Session
+        Create Session
       </Typography>
       <Card>
         <CardContent>
-          <Box component="form" onSubmit={handleSubmit} noValidate>
-            <Grid container spacing={2} direction="column" component="div">
-              <Grid>
+          <form onSubmit={handleSubmit} noValidate>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
                 <TextField
                   label="Session Name"
                   value={sessionName}
@@ -32,15 +38,17 @@ export default function CreateSessionPage() {
                   fullWidth
                 />
               </Grid>
-              <Grid>
+              <Grid item xs={12}>
                 <Button type="submit" variant="contained" fullWidth>
-                  Create Session
+                  Create
                 </Button>
               </Grid>
             </Grid>
-          </Box>
+          </form>
         </CardContent>
       </Card>
     </Container>
   );
-}
+};
+
+export default CreateSessionPage;

@@ -1,10 +1,10 @@
 import React from 'react';
-import { Card, CardContent, Typography, Box } from '@mui/material';
+import { Card, CardContent, Typography } from '@mui/material';
 
-interface Participant {
+export interface Participant {
   name: string;
   voted: boolean;
-  vote?: string | number;
+  vote: number | null;
 }
 
 interface ParticipantCardProps {
@@ -12,23 +12,24 @@ interface ParticipantCardProps {
   revealed: boolean;
 }
 
-export default function ParticipantCard({ participant, revealed }: ParticipantCardProps) {
-  return (
-    <Card variant="outlined">
-      <CardContent>
-        <Typography variant="h6">{participant.name}</Typography>
-        <Box sx={{ mt: 1 }}>
-          {participant.voted ? (
-            revealed ? (
-              <Typography variant="h5">{participant.vote}</Typography>
-            ) : (
-              <Typography>Voted</Typography>
-            )
-          ) : (
-            <Typography color="text.secondary">Awaiting vote...</Typography>
-          )}
-        </Box>
-      </CardContent>
-    </Card>
-  );
-}
+const ParticipantCard: React.FC<ParticipantCardProps> = ({
+  participant,
+  revealed,
+}) => (
+  <Card variant="outlined">
+    <CardContent>
+      <Typography variant="h6">{participant.name}</Typography>
+      {participant.voted ? (
+        revealed ? (
+          <Typography variant="h4">{participant.vote}</Typography>
+        ) : (
+          <Typography>Voted</Typography>
+        )
+      ) : (
+        <Typography color="text.secondary">Awaiting vote…</Typography>
+      )}
+    </CardContent>
+  </Card>
+);
+
+export default ParticipantCard;
