@@ -1,120 +1,105 @@
-// src/pages/SessionPage.tsx
-import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useSession } from '../context/SessionContext';
-import Button from '../components/Button';
-import Input from '../components/Input';
-import VoteCard from '../components/VoteCard';
-import ParticipantList from '../components/ParticipantList'; // Ensure the file exists at this path or adjust the path
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import { Container, Typography, Grid, Box, Button, CircularProgress } from '@mui/material';
+import ParticipantCard from '../components/ParticipantCard';
 
-const SessionPage: React.FC = () => {
-  const { id: sessionId } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const {
-    sessions, addTicket, castVote, revealVotes,
-    resetVotes, removeUser, deleteSession
-  } = useSession();
-  const session = sessionId ? sessions[sessionId] : undefined;
-  const [newTicketTitle, setNewTicketTitle] = useState('');
-  const [selectedValue, setSelectedValue] = useState<number | null>(null);
+export default function SessionPage() {
+  const { id } = useParams();
+  const [loading, setLoading] = useState(true);
+  const [participants, setParticipants] = useState([]);
+  const [revealed, setRevealed] = useState(false);
 
-  if (!session) {
-    return <div className="text-center text-red-500">Session not found.</div>;
+  useEffect(() => {
+    // TODO: Fetch session data from backend using `id`
+    // Simulate loading
+    setTimeout(() => {
+      setParticipants([
+        { name: 'Alice', voted: true, vote: 5 },
+        { name: 'Bob', voted: false, vote: null },
+      ]);
+      setLoading(false);
+    }, 1000);
+  }, [id]);
+
+  const handleReveal = () => {
+    setRevealed(true);
+  };
+
+  const handleRestart = () => {
+    setRevealed(false);
+    setParticipants((prev) =>
+      prev.map((p) => ({ ...p, voted: false, vote: null }))
+    );
+  };
+
+  const handleVote = (value) => {
+    // TODO: Submit vote for current user
+    // For demo, mark first participant as voted
+    setParticipants((prev) =>
+      prev.map((p, idx) =>
+        idx === 0 ? { ...p, voted: true, vote: value } : p
+      )
+    );
+  };
+
+  if (loading) {
+    return (
+      <Container sx={{ mt: 4, textAlign: 'center' }}>
+        <CircularProgress />
+        <Typography>Loading session...</Typography>
+      </Container>
+    );
   }
 
-  const isModerator = session.moderator === /*[placeholder for current user]*/ session.participants[0];
-  const currentTicket = session.tickets[0]; // Voting on first ticket only for simplicity
-
-  // Handle adding a new ticket (moderator only)
-  const handleAddTicket = () => {
-    if (!newTicketTitle.trim()) return;
-    addTicket(session.id, newTicketTitle.trim());
-    setNewTicketTitle('');
-  };
-
-  // Handle user casting a vote
-  const handleVote = (value: number) => {
-    if (!selectedValue) {
-      setSelectedValue(value);
-      castVote(session.id, currentTicket.id, session.participants[0], value);
-    }
-  };
-
-  // Handle reveal votes (moderator only)
-  const handleReveal = () => {
-    revealVotes(session.id);
-  };
-
-  // Handle restart (clear votes) (moderator only)
-  const handleReset = () => {
-    resetVotes(session.id);
-    setSelectedValue(null);
-  };
-
-  // Handle deleting session (moderator only)
-  const handleDelete = () => {
-    deleteSession(session.id);
-    navigate('/');
-  };
-
   return (
-    <div>
-      {/* Session Header */}
-      <header className="mb-4 border-b pb-2">
-        <h2 className="text-2xl font-bold">{session.name}</h2>
-        <p className="text-sm text-gray-600">Session ID: {session.id}</p>
-      </header>
+    <Container sx={{ mt: 4 }}>
+      <Typography variant="h4" gutterBottom>
+        Session ID: {id}
+      </Typography>
+      <Typography variant="body1" gutterBottom>
+        Invite others to join this session using the session ID above.
+      </Typography>
 
-      {/* Session Content */}
-      <div className="flex flex-col md:flex-row gap-6">
-        {/* Left Panel: Participants and Controls */}
-        <div className="md:w-1/3">
-          <ParticipantList participants={session.participants} 
-                           votes={currentTicket.votes} 
-                           revealed={session.revealed} />
-          {isModerator && (
-            <div className="mt-4 space-y-2">
-              <Input 
-                label="New Ticket Title" 
-                value={newTicketTitle} 
-                onChange={e => setNewTicketTitle(e.target.value)}
-                placeholder="Enter ticket/story title" 
-              />
-              <Button onClick={handleAddTicket} className="w-full">
-                Add Ticket
-              </Button>
-              <Button onClick={handleReveal} className="w-full bg-yellow-500 hover:bg-yellow-600">
-                Reveal Votes
-              </Button>
-              <Button onClick={handleReset} className="w-full bg-indigo-600 hover:bg-indigo-700">
-                Clear Votes
-              </Button>
-              <Button onClick={handleDelete} className="w-full bg-red-600 hover:bg-red-700">
-                End Session
-              </Button>
-            </div>
-          )}
-        </div>
+      {participants.length === 0 ? (
+        <Typography>No participants yet</Typography>
+      ) : (
+        <Grid container spacing={2}>
+          {participants.map((participant, index) => (
+            <Grid item xs={12} md={4} key={index}>
+              <ParticipantCard participant={participant} revealed={revealed} />
+            </Grid>
+          ))}
+        </Grid>
+      )}
 
-        {/* Right Panel: Voting Cards */}
-        <div className="md:w-2/3">
-          <h3 className="text-xl font-semibold mb-2">Current Ticket:</h3>
-          <p className="mb-4 text-gray-700">{currentTicket?.title || 'No ticket added yet.'}</p>
-          
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
-            { [1, 2, 3, 5, 8, 13, 21, 34, 55].map(point => (
-              <VoteCard 
-                key={point}
-                value={point}
-                onClick={() => handleVote(point)}
-                selected={selectedValue === point}
-              />
-            )) }
-          </div>
-        </div>
-      </div>
-    </div>
+      <Box sx={{ mt: 4 }}>
+        {!revealed && (
+          <>
+            <Typography variant="h6">Select Your Vote</Typography>
+            <Grid container spacing={1} sx={{ mt: 1 }}>
+              {[1, 2, 3, 5, 8, 13].map((point) => (
+                <Grid item key={point}>
+                  <Button
+                    variant="contained"
+                    onClick={() => handleVote(point)}
+                    disabled={revealed}
+                  >
+                    {point}
+                  </Button>
+                </Grid>
+              ))}
+            </Grid>
+          </>
+        )}
+        <Box sx={{ mt: 2 }}>
+          <Button variant="outlined" onClick={handleReveal} sx={{ mr: 2 }}>
+            Reveal Votes
+          </Button>
+          <Button variant="outlined" onClick={handleRestart}>
+            Restart Session
+          </Button>
+        </Box>
+      </Box>
+    </Container>
   );
-};
-
-export default SessionPage;
+}
