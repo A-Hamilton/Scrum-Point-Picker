@@ -13,7 +13,7 @@ const Button: React.FC<ButtonProps> = ({ children, className, ...props }) => (
       `bg-blue-600 hover:bg-blue-700 text-white ` +
       (className ?? '')
     }
-    {...props}
+    {...props} 
   >
     {children} 
   </button>
