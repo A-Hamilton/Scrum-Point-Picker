@@ -1,3 +1,5 @@
+// src/context/SessionContext.tsx
+
 import React, {
   createContext,
   useContext,
@@ -6,13 +8,16 @@ import React, {
   ReactNode,
 } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { useSocket } from './SocketContext';
 
+/** A single ticket within a session */
 export interface Ticket {
   id: string;
   title: string;
   votes: Record<string, number | null>;
 }
 
+/** The overall session state */
 export interface Session {
   id: string;
   name: string;
@@ -22,10 +27,11 @@ export interface Session {
   revealed: boolean;
 }
 
+/** The context API exposed to your components */
 export interface SessionContextType {
   sessions: Record<string, Session>;
   createSession: (name: string, moderator: string) => string;
-  joinSession: (id: string, userName: string) => void;
+  joinSession: (sessionId: string, userName: string) => void;
   addTicket: (sessionId: string, title: string) => void;
   deleteTicket: (sessionId: string, ticketId: string) => void;
   castVote: (
@@ -44,156 +50,96 @@ const SessionContext = createContext<SessionContextType | undefined>(
   undefined
 );
 
+/** Hook to consume the session context */
 export const useSession = (): SessionContextType => {
   const ctx = useContext(SessionContext);
-  if (!ctx) throw new Error('useSession must be inside SessionProvider');
+  if (!ctx) {
+    throw new Error('useSession must be used within a SessionProvider');
+  }
   return ctx;
 };
 
+/** Provider that wraps your app to supply session data and actions */
 export const SessionProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
-  const [sessions, setSessions] = useState<Record<string, Session>>(() => {
-    const stored = localStorage.getItem('sessions');
-    return stored ? JSON.parse(stored) : {};
-  });
+  const socket = useSocket();
 
-  // persist on every change
+  // All sessions are stored in-memory on the server; we mirror them here.
+  const [sessions, setSessions] = useState<Record<string, Session>>({});
+
+  // Subscribe to server events once on mount
   useEffect(() => {
-    localStorage.setItem('sessions', JSON.stringify(sessions));
-  }, [sessions]);
+    // Initial list of all sessions
+    socket.on('sessionList', (list: Record<string, Session>) => {
+      setSessions(list);
+    });
+    // Updates for a single session
+    socket.on('sessionUpdate', (updated: Session) => {
+      setSessions((prev) => ({ ...prev, [updated.id]: updated }));
+    });
 
-  const createSession = (name: string, moderator: string) => {
-    const id = uuidv4();
-    const session: Session = {
-      id,
-      name,
-      moderator,
-      participants: [moderator],
-      tickets: [],
-      revealed: false,
+    return () => {
+      socket.off('sessionList');
+      socket.off('sessionUpdate');
     };
-    setSessions((s) => ({ ...s, [id]: session }));
+  }, [socket]);
+
+  /** Create a new session on the server */
+  const createSession = (name: string, moderator: string): string => {
+    const id = uuidv4();
+    socket.emit('createSession', { id, name, moderator });
     return id;
   };
 
-  const joinSession = (id: string, userName: string) => {
-    setSessions((s) => {
-      const session = s[id];
-      if (!session) return s;
-      if (session.participants.includes(userName)) return s;
-      // add user and init votes on existing tickets
-      const updated: Session = {
-        ...session,
-        participants: [...session.participants, userName],
-        tickets: session.tickets.map((t) => ({
-          ...t,
-          votes: { ...t.votes, [userName]: null },
-        })),
-      };
-      return { ...s, [id]: updated };
-    });
+  /** Join an existing session room */
+  const joinSession = (sessionId: string, userName: string): void => {
+    socket.emit('joinSession', { id: sessionId, userName });
   };
 
-  const addTicket = (sessionId: string, title: string) => {
-    setSessions((s) => {
-      const session = s[sessionId];
-      if (!session) return s;
-      const ticket: Ticket = {
-        id: uuidv4(),
-        title,
-        votes: session.participants.reduce(
-          (acc, u) => ({ ...acc, [u]: null }),
-          {}
-        ),
-      };
-      const updated: Session = {
-        ...session,
-        tickets: [...session.tickets, ticket],
-        revealed: false,
-      };
-      return { ...s, [sessionId]: updated };
-    });
+  /** Add a new ticket to a session */
+  const addTicket = (sessionId: string, title: string): void => {
+    const ticket: Ticket = {
+      id: uuidv4(),
+      title,
+      votes: {},
+    };
+    socket.emit('addTicket', { sessionId, ticket });
   };
 
-  const deleteTicket = (sessionId: string, ticketId: string) => {
-    setSessions((s) => {
-      const session = s[sessionId];
-      if (!session) return s;
-      const updated: Session = {
-        ...session,
-        tickets: session.tickets.filter((t) => t.id !== ticketId),
-      };
-      return { ...s, [sessionId]: updated };
-    });
+  /** Remove a ticket from a session */
+  const deleteTicket = (sessionId: string, ticketId: string): void => {
+    socket.emit('deleteTicket', { sessionId, ticketId });
   };
 
+  /** Cast or update your vote on a given ticket */
   const castVote = (
     sessionId: string,
     ticketId: string,
     userName: string,
     value: number
-  ) => {
-    setSessions((s) => {
-      const session = s[sessionId];
-      if (!session) return s;
-      const updatedTickets = session.tickets.map((t) =>
-        t.id === ticketId
-          ? { ...t, votes: { ...t.votes, [userName]: value } }
-          : t
-      );
-      return { ...s, [sessionId]: { ...session, tickets: updatedTickets } };
-    });
+  ): void => {
+    socket.emit('castVote', { sessionId, ticketId, userName, value });
   };
 
-  const revealVotes = (sessionId: string) => {
-    setSessions((s) => {
-      const session = s[sessionId];
-      if (!session) return s;
-      return { ...s, [sessionId]: { ...session, revealed: true } };
-    });
+  /** Reveal all votes in the session */
+  const revealVotes = (sessionId: string): void => {
+    socket.emit('revealVotes', { sessionId });
   };
 
-  const resetVotes = (sessionId: string) => {
-    setSessions((s) => {
-      const session = s[sessionId];
-      if (!session) return s;
-      const cleared = session.tickets.map((t) => ({
-        ...t,
-        votes: Object.keys(t.votes).reduce(
-          (acc, u) => ({ ...acc, [u]: null }),
-          {}
-        ),
-      }));
-      return {
-        ...s,
-        [sessionId]: { ...session, tickets: cleared, revealed: false },
-      };
-    });
+  /** Reset voting state (clear all votes) */
+  const resetVotes = (sessionId: string): void => {
+    socket.emit('resetVotes', { sessionId });
   };
 
-  const removeUser = (sessionId: string, userName: string) => {
-    setSessions((s) => {
-      const session = s[sessionId];
-      if (!session) return s;
-      const remaining = session.participants.filter((u) => u !== userName);
-      const updatedTickets = session.tickets.map((t) => {
-        const { [userName]: _, ...rest } = t.votes;
-        return { ...t, votes: rest as Record<string, number | null> };
-      });
-      return {
-        ...s,
-        [sessionId]: { ...session, participants: remaining, tickets: updatedTickets },
-      };
-    });
+  /** Remove a participant from the session */
+  const removeUser = (sessionId: string, userName: string): void => {
+    socket.emit('removeUser', { sessionId, userName });
   };
 
-  const deleteSession = (sessionId: string) => {
-    setSessions((s) => {
-      const copy = { ...s };
-      delete copy[sessionId];
-      return copy;
-    });
+  /** Delete a session entirely */
+  const deleteSession = (sessionId: string): void => {
+    socket.emit('deleteSession', { sessionId });
   };
 
   return (
