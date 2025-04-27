@@ -88,9 +88,15 @@ export const SessionProvider: React.FC<{ children: ReactNode }> = ({
   /** Create a new session on the server */
   const createSession = (name: string, moderator: string): string => {
     const id = uuidv4();
+    setSessions(prev => ({
+      ...prev,
+      [id]: { id, name, moderator, participants: [moderator], tickets: [], revealed: false }
+    }));
+  
     socket.emit('createSession', { id, name, moderator });
     return id;
   };
+  
 
   /** Join an existing session room */
   const joinSession = (sessionId: string, userName: string): void => {

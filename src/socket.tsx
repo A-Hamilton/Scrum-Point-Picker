@@ -1,7 +1,5 @@
-import { io } from "socket.io-client";
+// src/socket.js
+import { io } from 'socket.io-client';
 
-export const socket = io("http://localhost:4000", {
-  transports: ["websocket"],
-  autoConnect: false
-});
-socket.connect();
+// USE CRA PROXY:
+export const socket = io({ autoConnect: false });
