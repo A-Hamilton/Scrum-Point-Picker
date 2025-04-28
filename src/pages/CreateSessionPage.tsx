@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Container, Button, TextField, Typography } from '@mui/material';
+import { Button, Container, TextField, Typography } from '@mui/material';
 import requestSession from '../utils/requestSession';
 
 const CreateSessionPage: React.FC = () => {
@@ -12,25 +12,28 @@ const CreateSessionPage: React.FC = () => {
     setSessionID(id);
   };
 
-  const enterSession = () => {
-    navigate(`/session/${sessionID}`);
-  };
-
   return (
-    <Container sx={{ mt: 8, textAlign: 'center' }}>
-      <Typography variant="h5" gutterBottom>Create a new session</Typography>
-      <Button onClick={handleCreate} variant="contained">Generate ID</Button>
+    <Container sx={{ textAlign: 'center', mt: 8 }}>
+      <Typography variant="h5" gutterBottom>
+        Create a new session
+      </Typography>
+      <Button onClick={handleCreate} variant="contained">
+        Generate Session ID
+      </Button>
       {sessionID && (
         <>
           <TextField
-            label="Session ID"
+            label="Your Session ID"
             value={sessionID}
-            variant="outlined"
-            margin="normal"
             fullWidth
-            disabled
+            margin="normal"
+            InputProps={{ readOnly: true }}
           />
-          <Button onClick={enterSession} variant="contained" color="secondary">
+          <Button
+            onClick={() => navigate(`/session/${sessionID}`)}
+            variant="contained"
+            color="secondary"
+          >
             Enter Session
           </Button>
         </>

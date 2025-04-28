@@ -1,10 +1,12 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Container, Button, Typography } from '@mui/material';
+import { Button, Container, Typography } from '@mui/material';
 
 const HomePage: React.FC = () => (
   <Container sx={{ textAlign: 'center', mt: 8 }}>
-    <Typography variant="h4" gutterBottom>Welcome to Scrum Point Picker</Typography>
+    <Typography variant="h4" gutterBottom>
+      Scrum Point Picker
+    </Typography>
     <Button component={Link} to="/create" variant="contained" sx={{ m: 1 }}>
       Create Session
     </Button>

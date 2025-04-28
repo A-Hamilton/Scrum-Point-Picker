@@ -1,3 +1,4 @@
+// src/pages/SessionPage.tsx
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container, Grid, Button, Typography } from '@mui/material';
@@ -14,33 +15,34 @@ interface SessionData { id: string; members: Member[]; showVote: boolean; }
 
 const SessionPage: React.FC = () => {
   const { id: routeID } = useParams<{ id: string }>();
-  const [sessionID, setSessionID] = useState(routeID || '');
+  const [sessionID, setSessionID] = useState<string>(routeID || '');
   const [session, setSession] = useState<SessionData | null>(null);
 
+  // On mount: if routeID exists, JOIN; otherwise CREATE
   useEffect(() => {
-    // If no route param, create one
-    if (!routeID) {
-      requestSession().then(id => {
-        setSessionID(id);
-        socket.emit('joinRoom', id);
-      });
-    } else {
-      joinSession(routeID).then(() => {
-        setSessionID(routeID);
-        socket.emit('joinRoom', routeID);
-      });
-    }
-  }, [routeID]);
+    (async () => {
+      if (routeID) {
+        await joinSession(routeID);
+      } else {
+        const newID = await requestSession();
+        setSessionID(newID);
+      }
+      socket.emit('joinRoom', routeID || sessionID);
+    })();
+  }, [routeID, sessionID]);
 
+  // Subscribe to updates for this session
   useEffect(() => {
     if (!sessionID) return;
-    const event = `fetchData-${sessionID}`;
-    socket.on(event, setSession);
-    return () => { socket.off(event); };
+    const evt = `fetchData-${sessionID}`;
+    socket.on(evt, (data: SessionData) => setSession(data));
+    return () => { socket.off(evt); };
   }, [sessionID]);
 
-  const castVote = (vote: number) =>
-    socket.emit('vote', { sessionID, user: getUser(), vote });
+  const castVote = (vote: number) => socket.emit(
+    'vote',
+    { sessionID, user: getUser(), vote }
+  );
 
   if (!session) {
     return <Typography>Loading…</Typography>;
@@ -62,10 +64,18 @@ const SessionPage: React.FC = () => {
           </Grid>
         ))}
       </Grid>
-      <Button onClick={() => showVotes(sessionID)} variant="contained" sx={{ mt: 2, mr: 1 }}>
+      <Button
+        onClick={() => showVotes(sessionID)}
+        variant="contained"
+        sx={{ mt: 2, mr: 1 }}
+      >
         Show Votes
       </Button>
-      <Button onClick={() => clearVotes(sessionID)} variant="outlined" sx={{ mt: 2 }}>
+      <Button
+        onClick={() => clearVotes(sessionID)}
+        variant="outlined"
+        sx={{ mt: 2 }}
+      >
         Clear Votes
       </Button>
     </Container>
