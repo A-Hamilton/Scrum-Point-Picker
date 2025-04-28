@@ -9,19 +9,28 @@ export interface VoteCardProps {
 const options = [1, 2, 3, 5, 8, 13, 21];
 
 const VoteCard: React.FC<VoteCardProps> = ({ userName, vote, onVote }) => (
-  <div style={{
-    border: '1px solid #ccc',
-    borderRadius: 8,
-    padding: 16,
-    width: 120,
-    textAlign: 'center'
-  }}>
+  <div
+    style={{
+      border: '1px solid #ccc',
+      borderRadius: 8,
+      padding: 16,
+      width: 120,
+      textAlign: 'center'
+    }}
+  >
     <strong>{userName}</strong>
     <div style={{ margin: '12px 0', fontSize: 24 }}>
-      {vote !== null ? vote : '…'}
+      {vote !== null ? vote : '❓'}
     </div>
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
-      {options.map(opt => (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 4,
+        justifyContent: 'center'
+      }}
+    >
+      {options.map((opt) => (
         <button
           key={opt}
           onClick={() => onVote(opt)}
