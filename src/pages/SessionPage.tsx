@@ -1,6 +1,6 @@
 // src/pages/SessionPage.tsx
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Container,
   Grid,
@@ -31,48 +31,54 @@ interface SessionData {
 
 const SessionPage: React.FC = () => {
   const { id: routeID } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [sessionID, setSessionID] = useState<string>(routeID || '');
-  const [session, setSession] = useState<SessionData | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
+  const [session, setSession]     = useState<SessionData | null>(null);
+  const [loading, setLoading]     = useState<boolean>(true);
+  const [error, setError]         = useState<string>('');
 
-  // Step 1: Create or join session, then join Socket.IO room
+  // 1) Create or JOIN, then socket-join and let the server add the user exactly once
   useEffect(() => {
     (async () => {
       try {
         let id = routeID ?? '';
+
         if (routeID) {
+          // Joining an existing session: tell server via REST
           await joinSession(routeID);
         } else {
+          // Creating a new session: get ID, store locally
           id = await requestSession();
           setSessionID(id);
+          // DO NOT call joinSession here – let socket 'joinRoom' add us
         }
-        socket.emit('joinRoom', id);
+
+        // Finally, connect via socket and register this user
+        socket.emit('joinRoom', { sessionID: id, user: getUser() });
       } catch {
-        setError('Failed to create or join session.');
+        setError('Session no longer exists.');
       } finally {
         setLoading(false);
       }
     })();
   }, [routeID]);
 
-  // Step 2: Listen for real-time session updates
+  // 2) Subscribe to live session updates
   useEffect(() => {
     if (!sessionID) return;
-    const event = `fetchData-${sessionID}`;
+    const evt = `fetchData-${sessionID}`;
     const handler = (data: SessionData) => setSession(data);
-    socket.on(event, handler);
+    socket.on(evt, handler);
     return () => {
-      socket.off(event, handler);
+      socket.off(evt, handler);
     };
   }, [sessionID]);
 
-  // Vote casting
-  const castVote = (vote: number) => {
+  // Vote action
+  const castVote = (vote: number) =>
     socket.emit('vote', { sessionID, user: getUser(), vote });
-  };
 
-  // Loading / error / empty states
+  // Loading state
   if (loading) {
     return (
       <Container sx={{ mt: 4, textAlign: 'center' }}>
@@ -80,26 +86,57 @@ const SessionPage: React.FC = () => {
       </Container>
     );
   }
+
+  // Error state: show navigation buttons
   if (error) {
     return (
-      <Container sx={{ mt: 4 }}>
-        <Alert severity="error">{error}</Alert>
-      </Container>
-    );
-  }
-  if (!session) {
-    return (
-      <Container sx={{ mt: 4 }}>
-        <Typography>No session data.</Typography>
+      <Container sx={{ mt: 4, textAlign: 'center' }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+        <Button
+          variant="contained"
+          onClick={() => navigate('/create')}
+          sx={{ mr: 1 }}
+        >
+          Create Session
+        </Button>
+        <Button
+          variant="outlined"
+          onClick={() => navigate('/join')}
+        >
+          Join Session
+        </Button>
       </Container>
     );
   }
 
-  // Compute the median‐rounded story point when votes are shown
-  const consensus =
-    session.showVote
-      ? medianRound(session.members.map(m => m.vote))
-      : null;
+  // No session data (should be rare)
+  if (!session) {
+    return (
+      <Container sx={{ mt: 4, textAlign: 'center' }}>
+        <Typography gutterBottom>No session data available.</Typography>
+        <Button
+          variant="contained"
+          onClick={() => navigate('/create')}
+          sx={{ mr: 1 }}
+        >
+          Create Session
+        </Button>
+        <Button
+          variant="outlined"
+          onClick={() => navigate('/join')}
+        >
+          Join Session
+        </Button>
+      </Container>
+    );
+  }
+
+  // Compute consensus (median snapped to valid options)
+  const consensus = session.showVote
+    ? medianRound(session.members.map(m => m.vote))
+    : null;
 
   return (
     <Container sx={{ mt: 4 }}>
