@@ -1,22 +1,11 @@
-// src/socket.ts
 import { io, Socket } from 'socket.io-client';
 
-// Dynamically compute your server URL
-const { protocol, hostname } = window.location;
-const SOCKET_PORT = 4000;
-const SOCKET_URL  = `${protocol}//${hostname}:${SOCKET_PORT}`;
+const URL =
+  process.env.NODE_ENV === 'development'
+    ? 'http://localhost:4000'
+    : `${window.location.protocol}//${window.location.host}`;
 
-// Create the Socket.IO client (no auto-connect)
-export const socket: Socket = io(SOCKET_URL, {
+export const socket: Socket = io(URL, {
   autoConnect: false,
-  transports: ['websocket', 'polling'],
+  transports: ['websocket']
 });
-
-// Expose for debugging in the console:
-//   const s = window.__socketTest__; s.connect(); …
-declare global {
-  interface Window {
-    __socketTest__?: Socket;
-  }
-}
-window.__socketTest__ = socket;

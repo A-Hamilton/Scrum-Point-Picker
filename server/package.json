@@ -5,9 +5,9 @@
     "license": "MIT",
     "proxy": "http://localhost:4000",
     "dependencies": {
-      "cors": "^2.8.5",
-      "express": "^4.18.4",
-      "socket.io": "^4.7.2"
+        "cors": "^2.8.5",
+        "express": "^4.21.2",
+        "socket.io": "^4.8.1",
+        "uuid": "^11.1.0"
     }
-  }
-  
+}
