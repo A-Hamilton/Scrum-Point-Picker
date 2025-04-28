@@ -20,4 +20,3 @@ declare global {
   }
 }
 window.__socketTest__ = socket;
-window.__socketTest__.connect = () => socket.connect();
