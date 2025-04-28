@@ -1,41 +1,33 @@
-import React, { useEffect, createContext, useMemo, useState } from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import ThemeContextProvider from './context/ThemeContext';
+import Navbar from './components/Navbar';
+import HomePage from './pages/HomePage';
+import CreateSessionPage from './pages/CreateSessionPage';
+import JoinSessionPage from './pages/JoinSessionPage';
+import SessionPage from './pages/SessionPage';
 import createUser from './utils/createUser';
 import { socket } from './socket';
-import SessionPage from './pages/SessionPage';
 
-// Theme toggle context
-export interface ColorModeContextType {
-  toggleColorMode: () => void;
-}
-export const ColorModeContext = createContext<ColorModeContextType>({
-  toggleColorMode: () => {}
-});
-
-function App(): JSX.Element {
-  const [mode, setMode] = useState<'light' | 'dark'>('light');
-  const colorMode = useMemo<ColorModeContextType>(
-    () => ({
-      toggleColorMode: () =>
-        setMode(prev => (prev === 'light' ? 'dark' : 'light'))
-    }),
-    []
-  );
-
+const App: React.FC = () => {
   useEffect(() => {
     createUser();
     socket.connect();
   }, []);
 
   return (
-    <ColorModeContext.Provider value={colorMode}>
+    <ThemeContextProvider>
       <BrowserRouter>
+        <Navbar />
         <Routes>
-          <Route path="/" element={<SessionPage />} />
+          <Route path="/" element={<HomePage />} />
+          <Route path="/create" element={<CreateSessionPage />} />
+          <Route path="/join" element={<JoinSessionPage />} />
+          <Route path="/session/:id" element={<SessionPage />} />
         </Routes>
       </BrowserRouter>
-    </ColorModeContext.Provider>
+    </ThemeContextProvider>
   );
-}
+};
 
 export default App;

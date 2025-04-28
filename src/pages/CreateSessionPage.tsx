@@ -1,47 +1,40 @@
-import React, { useState, FormEvent } from 'react';
-import { Container, Typography, TextField, Button, Grid, Card, CardContent } from '@mui/material';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSession } from '../context/SessionContext';
+import { Container, Button, TextField, Typography } from '@mui/material';
+import requestSession from '../utils/requestSession';
 
 const CreateSessionPage: React.FC = () => {
-  const [sessionName, setSessionName] = useState('');
-  const { createSession } = useSession();
+  const [sessionID, setSessionID] = useState<string>('');
   const navigate = useNavigate();
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!sessionName.trim()) return;
-    const id = createSession(sessionName.trim(), 'Moderator'); // Replace with real username
-    navigate(`/session/${id}`);
+  const handleCreate = async () => {
+    const id = await requestSession();
+    setSessionID(id);
+  };
+
+  const enterSession = () => {
+    navigate(`/session/${sessionID}`);
   };
 
   return (
-    <Container maxWidth="sm" sx={{ mt: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        Create New Session
-      </Typography>
-      <Card>
-        <CardContent>
-          <form onSubmit={handleSubmit} noValidate>
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <TextField
-                  label="Session Name"
-                  value={sessionName}
-                  onChange={(e) => setSessionName(e.target.value)}
-                  required
-                  fullWidth
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <Button type="submit" variant="contained" fullWidth>
-                  Create Session
-                </Button>
-              </Grid>
-            </Grid>
-          </form>
-        </CardContent>
-      </Card>
+    <Container sx={{ mt: 8, textAlign: 'center' }}>
+      <Typography variant="h5" gutterBottom>Create a new session</Typography>
+      <Button onClick={handleCreate} variant="contained">Generate ID</Button>
+      {sessionID && (
+        <>
+          <TextField
+            label="Session ID"
+            value={sessionID}
+            variant="outlined"
+            margin="normal"
+            fullWidth
+            disabled
+          />
+          <Button onClick={enterSession} variant="contained" color="secondary">
+            Enter Session
+          </Button>
+        </>
+      )}
     </Container>
   );
 };

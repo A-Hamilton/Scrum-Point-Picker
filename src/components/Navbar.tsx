@@ -1,36 +1,28 @@
-// src/components/Navbar.tsx
 import React, { useContext } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
-import { useTheme } from '@mui/material/styles';
-import IconButton from '@mui/material/IconButton';
-import { ColorModeContext, ColorModeContextType } from '../App';
+import { AppBar, Toolbar, IconButton, Typography, Button } from '@mui/material';
+import { Link } from 'react-router-dom';
+import { ColorModeContext } from '../context/ThemeContext';
+import Brightness4Icon from '@mui/icons-material/Brightness4';
+import Brightness7Icon from '@mui/icons-material/Brightness7';
+import { useTheme } from '@mui/material';
 
 const Navbar: React.FC = () => {
   const theme = useTheme();
-  // Tell TS exactly what comes out of the context
-  const colorMode = useContext<ColorModeContextType>(ColorModeContext);
+  const colorMode = useContext(ColorModeContext);
 
   return (
-    <nav
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 16px',
-        height: 56,
-        background: theme.palette.background.paper,
-      }}
-    >
-      <RouterLink to="/">Home</RouterLink>
-      <IconButton
-        sx={{ ml: 1 }}
-        onClick={colorMode.toggleColorMode}
-        color="inherit"
-        aria-label="toggle light/dark mode"
-      >
-        {theme.palette.mode === 'dark' ? '🌞' : '🌜'}
-      </IconButton>
-    </nav>
+    <AppBar position="static">
+      <Toolbar>
+        <Typography variant="h6" component={Link} to="/" sx={{ flexGrow: 1, color: 'inherit', textDecoration: 'none' }}>
+          Scrum Point Picker
+        </Typography>
+        <Button component={Link} to="/create" color="inherit">Create</Button>
+        <Button component={Link} to="/join" color="inherit">Join</Button>
+        <IconButton onClick={colorMode.toggleColorMode} color="inherit">
+          {theme.palette.mode === 'dark' ? <Brightness7Icon/> : <Brightness4Icon/>}
+        </IconButton>
+      </Toolbar>
+    </AppBar>
   );
 };
 

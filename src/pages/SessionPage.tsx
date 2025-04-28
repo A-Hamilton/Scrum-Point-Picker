@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { Container, Grid, Button, Typography } from '@mui/material';
 import { socket } from '../socket';
 import getUser from '../utils/getUser';
 import requestSession from '../utils/requestSession';
@@ -7,76 +9,66 @@ import showVotes from '../utils/showVotes';
 import clearVotes from '../utils/clearVotes';
 import VoteCard from '../components/VoteCard';
 
-interface Member {
-  userID: string;
-  userName: string;
-  vote: number | null;
-}
-interface SessionData {
-  id: string;
-  members: Member[];
-  showVote: boolean;
-}
+interface Member { userID: string; userName: string; vote: number | null; }
+interface SessionData { id: string; members: Member[]; showVote: boolean; }
 
 const SessionPage: React.FC = () => {
-  const [sessionID, setSessionID] = useState('');
+  const { id: routeID } = useParams<{ id: string }>();
+  const [sessionID, setSessionID] = useState(routeID || '');
   const [session, setSession] = useState<SessionData | null>(null);
 
   useEffect(() => {
+    // If no route param, create one
+    if (!routeID) {
+      requestSession().then(id => {
+        setSessionID(id);
+        socket.emit('joinRoom', id);
+      });
+    } else {
+      joinSession(routeID).then(() => {
+        setSessionID(routeID);
+        socket.emit('joinRoom', routeID);
+      });
+    }
+  }, [routeID]);
+
+  useEffect(() => {
     if (!sessionID) return;
-    const evt = `fetchData-${sessionID}`;
-    socket.on(evt, setSession);
-    return () => { socket.off(evt); };
+    const event = `fetchData-${sessionID}`;
+    socket.on(event, setSession);
+    return () => { socket.off(event); };
   }, [sessionID]);
 
-  const handleCreate = async () => {
-    const id = await requestSession();
-    setSessionID(id);
-    socket.emit('joinRoom', id);
-  };
-
-  const handleJoin = async () => {
-    if (!sessionID.trim()) return alert('Enter session ID');
-    await joinSession(sessionID);
-    socket.emit('joinRoom', sessionID);
-  };
-
-  const castVote = (vote: number) => {
+  const castVote = (vote: number) =>
     socket.emit('vote', { sessionID, user: getUser(), vote });
-  };
 
   if (!session) {
-    return (
-      <div>
-        <button onClick={handleCreate}>Create Session</button>
-        <input
-          placeholder="Session ID"
-          value={sessionID}
-          onChange={e => setSessionID(e.target.value)}
-        />
-        <button onClick={handleJoin}>Join Session</button>
-      </div>
-    );
+    return <Typography>Loading…</Typography>;
   }
 
   return (
-    <div>
-      <h2>Session: {session.id}</h2>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+    <Container sx={{ mt: 4 }}>
+      <Typography variant="h5" gutterBottom>
+        Session: {session.id}
+      </Typography>
+      <Grid container spacing={2}>
         {session.members.map(m => (
-          <VoteCard
-            key={m.userID}
-            userName={m.userName}
-            vote={session.showVote ? m.vote : null}
-            onVote={castVote}
-          />
+          <Grid item key={m.userID} xs={12} sm={6} md={4} lg={3}>
+            <VoteCard
+              userName={m.userName}
+              vote={session.showVote ? m.vote : null}
+              onVote={castVote}
+            />
+          </Grid>
         ))}
-      </div>
-      <div style={{ marginTop: 20 }}>
-        <button onClick={() => showVotes(sessionID)}>Show Votes</button>
-        <button onClick={() => clearVotes(sessionID)}>Clear Votes</button>
-      </div>
-    </div>
+      </Grid>
+      <Button onClick={() => showVotes(sessionID)} variant="contained" sx={{ mt: 2, mr: 1 }}>
+        Show Votes
+      </Button>
+      <Button onClick={() => clearVotes(sessionID)} variant="outlined" sx={{ mt: 2 }}>
+        Clear Votes
+      </Button>
+    </Container>
   );
 };
 
