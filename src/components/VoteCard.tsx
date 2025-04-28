@@ -1,53 +1,52 @@
 import React from 'react';
+import { Card, Typography, styled } from '@mui/material';
 
-export interface VoteCardProps {
-  userName: string;
-  vote: number | null;
-  onVote: (vote: number) => void;
+interface VoteCardProps {
+  voted: boolean;
+  vote?: number | null;
+  onClick?: (vote: number) => void;
 }
 
-const options = [1, 2, 3, 5, 8, 13, 21];
+// Fibonacci-like choices
+const OPTIONS = [1, 2, 3, 5, 8, 13, 21] as const;
 
-const VoteCard: React.FC<VoteCardProps> = ({ userName, vote, onVote }) => (
-  <div
-    style={{
-      border: '1px solid #ccc',
-      borderRadius: 8,
-      padding: 16,
-      width: 120,
-      textAlign: 'center'
-    }}
-  >
-    <strong>{userName}</strong>
-    <div style={{ margin: '12px 0', fontSize: 24 }}>
-      {vote !== null ? vote : '❓'}
-    </div>
-    <div
-      style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 4,
-        justifyContent: 'center'
-      }}
-    >
-      {options.map((opt) => (
-        <button
-          key={opt}
-          onClick={() => onVote(opt)}
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 4,
-            border: vote === opt ? '2px solid #007bff' : '1px solid #aaa',
-            background: vote === opt ? '#e7f1ff' : '#fff',
-            cursor: 'pointer'
-          }}
-        >
-          {opt}
-        </button>
-      ))}
-    </div>
-  </div>
-);
+const StyledVoteCard = styled(Card, {
+  shouldForwardProp: prop => prop !== 'voted',
+})<{ voted: boolean }>(({ theme, voted }) => ({
+  width: '100%',
+  height: 140,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  cursor: voted ? 'default' : 'pointer',
+  backgroundColor: voted ? theme.palette.primary.main : theme.palette.grey[200],
+  color: voted ? theme.palette.common.white : theme.palette.text.primary,
+  boxShadow: theme.shadows[3],
+  transition: 'transform 0.2s ease, background-color 0.3s ease',
+  '&:hover': {
+    transform: voted ? 'none' : 'scale(1.05)',
+  },
+}));
+
+const VoteCard: React.FC<VoteCardProps> = ({ voted, vote, onClick }) => {
+  // If user hasn't voted, cycle through options on click
+  const handleClick = () => {
+    if (!voted && onClick) {
+      // For simplicity choose the next option (or first)
+      const next = OPTIONS[(vote != null && OPTIONS.includes(vote as typeof OPTIONS[number]) 
+        ? OPTIONS.indexOf(vote as typeof OPTIONS[number]) + 1 
+        : 0) % OPTIONS.length];
+      onClick(next);
+    }
+  };
+
+  return (
+    <StyledVoteCard voted={voted} onClick={handleClick}>
+      <Typography variant="h2">
+        {voted ? vote : '?'}
+      </Typography>
+    </StyledVoteCard>
+  );
+};
 
 export default VoteCard;

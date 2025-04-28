@@ -1,4 +1,3 @@
-// src/pages/JoinSessionPage.tsx
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -31,7 +30,6 @@ export default function JoinSessionPage() {
     setLoading(true);
     setError('');
     try {
-      // Persist this user
       const id = crypto.randomUUID().substr(0, 12);
       localStorage.setItem('userName', userName.trim());
       localStorage.setItem('userID', id);
@@ -47,9 +45,9 @@ export default function JoinSessionPage() {
   return (
     <Container maxWidth="sm" sx={{ mt: 4 }}>
       <Typography variant="h4" gutterBottom>
-        Join Session
+        Join a Session
       </Typography>
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       <Card>
         <CardContent>
           <Box component="form" onSubmit={handleSubmit} noValidate>
@@ -73,12 +71,7 @@ export default function JoinSessionPage() {
                 />
               </Grid>
               <Grid item xs={12}>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  fullWidth
-                  disabled={loading}
-                >
+                <Button type="submit" variant="contained" color="primary" fullWidth disabled={loading}>
                   {loading ? <CircularProgress size={24} /> : 'Join Session'}
                 </Button>
               </Grid>

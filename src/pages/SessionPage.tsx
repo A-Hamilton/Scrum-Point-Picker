@@ -1,180 +1,202 @@
 // src/pages/SessionPage.tsx
+
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Container,
+  Paper,
+  Box,
   Grid,
+  TextField,
+  IconButton,
   Button,
   Typography,
   CircularProgress,
-  Alert
+  Alert,
+  LinearProgress,
+  Tooltip
 } from '@mui/material';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import EditIcon from '@mui/icons-material/Edit';
 import { socket } from '../socket';
 import getUser from '../utils/getUser';
 import requestSession from '../utils/requestSession';
 import joinSession from '../utils/joinSession';
 import showVotes from '../utils/showVotes';
 import clearVotes from '../utils/clearVotes';
-import VoteCard from '../components/VoteCard';
+import ParticipantCard from '../components/ParticipantCard';
+import VoteOptionCard from '../components/VoteOptionCard';
 import medianRound from '../utils/medianRound';
 
-interface Member {
-  userID: string;
-  userName: string;
-  vote: number | null;
-}
-interface SessionData {
-  id: string;
-  members: Member[];
-  showVote: boolean;
-}
+const OPTIONS = [1, 2, 3, 5, 8, 13, 21];
+const LEGEND: Record<number, string> = {
+  1: 'Under 1 week',
+  2: 'Under 2 weeks',
+  3: 'Under 4 weeks',
+  5: 'Under 12 weeks',
+  8: 'Under 24 weeks',
+  13: 'Under 6 months',
+  21: 'Over 6 months'
+};
+
+interface Member { userID: string; userName: string; vote: number | null; }
+interface SessionData { id: string; title: string; creatorId: string; members: Member[]; showVote: boolean; }
 
 const SessionPage: React.FC = () => {
   const { id: routeID } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const [sessionID, setSessionID] = useState<string>(routeID || '');
-  const [session, setSession]     = useState<SessionData | null>(null);
-  const [loading, setLoading]     = useState<boolean>(true);
-  const [error, setError]         = useState<string>('');
+  const user = getUser();
 
-  // 1) Create or JOIN, then socket-join and let the server add the user exactly once
+  const [sessionID, setSessionID] = useState(routeID || '');
+  const [session, setSession] = useState<SessionData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [title, setTitle] = useState('New Session');
+  const [editingTitle, setEditingTitle] = useState(false);
+
+  // Join or create session
   useEffect(() => {
     (async () => {
       try {
-        let id = routeID ?? '';
-
-        if (routeID) {
-          // Joining an existing session: tell server via REST
-          await joinSession(routeID);
-        } else {
-          // Creating a new session: get ID, store locally
-          id = await requestSession();
-          setSessionID(id);
-          // DO NOT call joinSession here – let socket 'joinRoom' add us
-        }
-
-        // Finally, connect via socket and register this user
-        socket.emit('joinRoom', { sessionID: id, user: getUser() });
+        let sid = routeID || '';
+        if (routeID) await joinSession(routeID);
+        else { sid = await requestSession(); setSessionID(sid); }
+        socket.emit('joinRoom', { sessionID: sid, user });
       } catch {
         setError('Session no longer exists.');
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     })();
-  }, [routeID]);
+  }, [routeID, user]);
 
-  // 2) Subscribe to live session updates
+  // Listen for session data, title, and name updates
   useEffect(() => {
     if (!sessionID) return;
-    const evt = `fetchData-${sessionID}`;
-    const handler = (data: SessionData) => setSession(data);
-    socket.on(evt, handler);
+    const dataEvt = `fetchData-${sessionID}`;
+    const titleEvt = `titleUpdated-${sessionID}`;
+    const nameEvt = `nameUpdated-${sessionID}`;
+
+    const handleData = (data: SessionData) => {
+      console.log('fetchData received:', data);
+      setSession(data);
+      setTitle(data.title);
+    };
+    const handleTitle = ({ title: newT }: { title: string }) => {
+      console.log('titleUpdated:', newT);
+      setTitle(newT);
+    };
+    const handleName = ({ userID, newName }: { userID: string; newName: string }) => {
+      console.log('nameUpdated:', userID, newName);
+      setSession(prev => prev && ({
+        ...prev,
+        members: prev.members.map(m =>
+          m.userID === userID ? { ...m, userName: newName } : m
+        )
+      }));
+    };
+
+    socket.on(dataEvt, handleData);
+    socket.on(titleEvt, handleTitle);
+    socket.on(nameEvt, handleName);
     return () => {
-      socket.off(evt, handler);
+      socket.off(dataEvt, handleData);
+      socket.off(titleEvt, handleTitle);
+      socket.off(nameEvt, handleName);
     };
   }, [sessionID]);
 
-  // Vote action
-  const castVote = (vote: number) =>
-    socket.emit('vote', { sessionID, user: getUser(), vote });
+  const saveTitle = () => {
+    setEditingTitle(false);
+    socket.emit('updateTitle', { sessionID, title });
+  };
+  const castVote = (n: number) => socket.emit('vote', { sessionID, user, vote: n });
+  const updateName = (userID: string, newName: string) => socket.emit('updateUserName', { sessionID, userID, newName });
 
-  // Loading state
-  if (loading) {
-    return (
-      <Container sx={{ mt: 4, textAlign: 'center' }}>
-        <CircularProgress />
-      </Container>
-    );
-  }
+  if (loading) return <Container sx={{ mt:4, textAlign:'center' }}><CircularProgress/></Container>;
+  if (error) return <Container sx={{ mt:4, textAlign:'center' }}><Alert severity="error">{error}</Alert></Container>;
+  if (!session) return null;
 
-  // Error state: show navigation buttons
-  if (error) {
-    return (
-      <Container sx={{ mt: 4, textAlign: 'center' }}>
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-        <Button
-          variant="contained"
-          onClick={() => navigate('/create')}
-          sx={{ mr: 1 }}
-        >
-          Create Session
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={() => navigate('/join')}
-        >
-          Join Session
-        </Button>
-      </Container>
-    );
-  }
-
-  // No session data (should be rare)
-  if (!session) {
-    return (
-      <Container sx={{ mt: 4, textAlign: 'center' }}>
-        <Typography gutterBottom>No session data available.</Typography>
-        <Button
-          variant="contained"
-          onClick={() => navigate('/create')}
-          sx={{ mr: 1 }}
-        >
-          Create Session
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={() => navigate('/join')}
-        >
-          Join Session
-        </Button>
-      </Container>
-    );
-  }
-
-  // Compute consensus (median snapped to valid options)
-  const consensus = session.showVote
-    ? medianRound(session.members.map(m => m.vote))
-    : null;
+  const unique = Array.from(new Map(session.members.map(m => [m.userID, m])).values());
+  const votedCount = unique.filter(m => m.vote != null).length;
+  const total = unique.length;
+  const pct = total ? (votedCount/total)*100 : 0;
+  const consensus = session.showVote ? medianRound(unique.map(m => m.vote)) : null;
 
   return (
-    <Container sx={{ mt: 4 }}>
-      <Typography variant="h5" gutterBottom>
-        Session: {session.id}
-      </Typography>
-      <Typography variant="subtitle1" gutterBottom>
-        {session.members.length} participant
-        {session.members.length !== 1 ? 's' : ''} joined.
-        {consensus !== null && ` Consensus: ${consensus}`}
-      </Typography>
-
-      <Grid container spacing={2}>
-        {session.members.map(m => (
-          <Grid item key={m.userID} xs={12} sm={6} md={4} lg={3}>
-            <VoteCard
-              userName={m.userName}
-              vote={session.showVote ? m.vote : null}
-              onVote={castVote}
+    <Container sx={{ mt:4 }}>
+      <Paper sx={{ p:4 }}>
+        <LinearProgress variant="determinate" value={pct} sx={{ mb:2 }} />
+        {/* Title */}
+        <Box display="flex" alignItems="center" mb={2}>
+          {editingTitle && session.creatorId === user.userID ? (
+            <TextField
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={e => e.key==='Enter'&&saveTitle()}
+              variant="standard"
+              autoFocus
+              sx={{ mr:1 }}
             />
-          </Grid>
-        ))}
-      </Grid>
-
-      <Button
-        onClick={() => showVotes(sessionID)}
-        variant="contained"
-        sx={{ mt: 2, mr: 1 }}
-      >
-        Show Votes
-      </Button>
-      <Button
-        onClick={() => clearVotes(sessionID)}
-        variant="outlined"
-        sx={{ mt: 2 }}
-      >
-        Clear Votes
-      </Button>
+          ) : (
+            <Typography
+              variant="h4"
+              onClick={session.creatorId===user.userID?() => setEditingTitle(true):undefined}
+              sx={{ cursor: session.creatorId===user.userID?'pointer':'default', flexGrow:1 }}
+            >
+              {title}
+            </Typography>
+          )}
+          {session.creatorId===user.userID && !editingTitle && (
+            <IconButton onClick={() => setEditingTitle(true)}><EditIcon/></IconButton>
+          )}
+        </Box>
+        {/* Session Info */}
+        <Typography variant="body2" sx={{ mb:1 }}>
+          Session ID: <Typography component="span" sx={{ fontFamily:'monospace', textDecoration:'underline', cursor:'pointer' }} onClick={()=>navigator.clipboard.writeText(window.location.href)}>{sessionID}</Typography>
+        </Typography>
+        <Typography variant="subtitle1" gutterBottom>
+          {total} participant{total!==1?'s':''} joined{consensus!==null?` — Consensus: ${consensus}`:''}
+        </Typography>
+        {/* Participants */}
+        <Typography variant="h6" gutterBottom>Participants</Typography>
+        <Grid container spacing={2} sx={{ mb:2 }}>
+          {unique.map(m => (
+            <Grid key={m.userID} item xs={12} sm={6} md={4} lg={3}>
+              <ParticipantCard
+                participant={{ name: m.userName, voted: m.vote!=null, vote: m.vote }}
+                revealed={session.showVote}
+                editable={m.userID===user.userID}
+                onUpdateName={newName => updateName(m.userID, newName)}
+              />
+            </Grid>
+          ))}
+        </Grid>
+        {/* Voting Options */}
+        {!session.showVote && (
+          <>
+            <Typography variant="h6" gutterBottom>Your Vote</Typography>
+            <Grid container spacing={2} sx={{ mb:2 }}>
+              {OPTIONS.map(n => (
+                <Grid key={n} item xs={4} sm={2}>
+                  <Tooltip title={LEGEND[n]} arrow>
+                    <Box>
+                      <VoteOptionCard
+                        option={n}
+                        selected={unique.find(u=>u.userID===user.userID)?.vote===n}
+                        onClick={()=>castVote(n)}
+                      />
+                    </Box>
+                  </Tooltip>
+                </Grid>
+              ))}
+            </Grid>
+          </>
+        )}
+        {/* Controls */}
+        <Box sx={{ display:'flex', gap:2 }}>
+          <Button onClick={()=>showVotes(sessionID)} variant="contained">Show Votes</Button>
+          <Button onClick={()=>clearVotes(sessionID)} variant="outlined">Clear Votes</Button>
+        </Box>
+      </Paper>
     </Container>
   );
 };
