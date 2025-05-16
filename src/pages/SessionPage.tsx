@@ -1,3 +1,5 @@
+// src/pages/SessionPage.tsx
+
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -146,8 +148,12 @@ const SessionPage: React.FC = () => {
   const canReveal = !session.showVote && votes.length > 0;
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
-      <Paper sx={{ p: 3 }} elevation={4}>
+    <Container
+      disableGutters
+      maxWidth={isMobile ? false : 'md'}
+      sx={{ py: 4 }}
+    >
+      <Paper sx={{ p: 3, px: isMobile ? 1 : 3 }} elevation={4}>
         {/* Header */}
         <Grid container alignItems="center" spacing={2} mb={3}>
           <Grid item xs>
