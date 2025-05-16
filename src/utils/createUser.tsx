@@ -1,5 +1,3 @@
-class User { id = ''; displayName = ''; }
-
 export default function createUser(): void {
   const nameStored = localStorage.getItem('userName');
   const idStored = localStorage.getItem('userID');
