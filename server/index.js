@@ -5,66 +5,59 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 
-const sessions = require('./sessionsStore');
-const sessionRoutes = require('./routes/sessions');
+// In-memory store for sessions
+const sessions = {};
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use('/sessions', sessionRoutes);
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-/** Helper to broadcast the full session to a room */
+/** Broadcast the full session object to everyone in the room */
 function emitSession(sessionID) {
   const sess = sessions[sessionID];
-  if (sess) io.to(sessionID).emit(`fetchData-${sessionID}`, sess);
+  if (sess) {
+    io.to(sessionID).emit(`fetchData-${sessionID}`, sess);
+  }
 }
 
 io.on('connection', socket => {
   console.log('Client connected:', socket.id);
 
-  // 1) Create a new session
+  // Create a new planning poker room
   socket.on('createRoom', ({ user }) => {
     const sessionID = uuidv4();
     sessions[sessionID] = {
       id: sessionID,
       title: 'Planning Poker',
       creatorId: user.userID,
-      members: [],
+      members: [{ userID: user.userID, userName: user.userName.trim(), vote: null }],
       showVote: false,
     };
     socket.join(sessionID);
-    sessions[sessionID].members.push({
-      userID: user.userID,
-      userName: user.userName.trim(),
-      vote: null,
-    });
 
-    // ← ADD: let the creator know the new sessionID
+    // 1) Acknowledge back to creator so they can navigate
     socket.emit('sessionCreated', { sessionID });
 
-    // ← ADD: send them the initial data immediately
+    // 2) Send initial state
     emitSession(sessionID);
   });
 
-  // 2) Join an existing room
+  // Join an existing room
   socket.on('joinRoom', ({ sessionID, user }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
+
     socket.join(sessionID);
-    if (!sess.members.some(m => m.userID === user.userID)) {
-      sess.members.push({
-        userID: user.userID,
-        userName: user.userName.trim(),
-        vote: null,
-      });
+    if (!sess.members.find(m => m.userID === user.userID)) {
+      sess.members.push({ userID: user.userID, userName: user.userName.trim(), vote: null });
     }
     emitSession(sessionID);
   });
 
-  // 3) Title updates
+  // Update the session title
   socket.on('updateTitle', ({ sessionID, title }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
@@ -73,16 +66,16 @@ io.on('connection', socket => {
     emitSession(sessionID);
   });
 
-  // 4) Votes
+  // Cast a vote
   socket.on('vote', ({ sessionID, userID, vote }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
-    const member = sess.members.find(m => m.userID === userID);
-    if (member) member.vote = vote;
+    const mem = sess.members.find(m => m.userID === userID);
+    if (mem) mem.vote = vote;
     io.to(sessionID).emit(`votesUpdated-${sessionID}`, sess.members);
   });
 
-  // 5) Reveal
+  // Reveal all votes
   socket.on('reveal', ({ sessionID }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
@@ -90,28 +83,37 @@ io.on('connection', socket => {
     io.to(sessionID).emit(`revealUpdated-${sessionID}`, { showVote: true });
   });
 
-  // 6) Reset
+  // ← UPDATED: Reset votes AND hide them again
   socket.on('reset', ({ sessionID }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
+
+    // 1) Clear every vote
     sess.members.forEach(m => (m.vote = null));
+
+    // 2) Hide votes again
+    sess.showVote = false;
+
+    // 3) Notify clients to update reveal state
+    io.to(sessionID).emit(`revealUpdated-${sessionID}`, { showVote: false });
+
+    // 4) Broadcast the cleared session
     emitSession(sessionID);
   });
 
-  // 7) Rename
+  // Rename a participant
   socket.on('updateUserName', ({ sessionID, userID, newName }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
-    const member = sess.members.find(m => m.userID === userID);
-    if (member && newName.trim()) member.userName = newName.trim();
-    io.to(sessionID).emit(`nameUpdated-${sessionID}`, {
-      userID,
-      newName: member.userName,
-    });
+    const mem = sess.members.find(m => m.userID === userID);
+    if (mem && newName.trim()) mem.userName = newName.trim();
+    io.to(sessionID).emit(`nameUpdated-${sessionID}`, { userID, newName: mem.userName });
     emitSession(sessionID);
   });
 
-  socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
 });
 
 const PORT = process.env.PORT || 4000;

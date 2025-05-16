@@ -21,6 +21,7 @@ interface Member {
   userName: string;
   vote: number | null;
 }
+
 interface SessionData {
   id: string;
   title: string;
@@ -31,7 +32,7 @@ interface SessionData {
 
 const SessionPage: React.FC = () => {
   const { sessionID } = useParams<{ sessionID: string }>();
-  const userID   = getOrCreateUserID();
+  const userID = getOrCreateUserID();
   const userName = localStorage.getItem('userName') || 'Anonymous';
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -41,31 +42,32 @@ const SessionPage: React.FC = () => {
   useEffect(() => {
     if (!sessionID) return;
 
-    // (Re)connect & join
+    // Ensure socket is connected
     if (!socket.connected) socket.connect();
-    socket.once('connect', () => {
-      socket.emit('joinRoom', { sessionID, user: { userID, userName } });
-    });
 
-    // Handler for initial + full-session broadcasts
+    // Join the room
+    socket.emit('joinRoom', { sessionID, user: { userID, userName } });
+
+    // Handler for initial session data
     const handleFetch = (data: SessionData) => {
       setSession(data);
       setTitleInput(data.title);
       setLoading(false);
     };
-
     socket.on(`fetchData-${sessionID}`, handleFetch);
 
-    // Subsequent updates
-    socket.on(`titleUpdated-${sessionID}`, ({ title }) => {
-      setSession((s) => s ? { ...s, title } : s);
-    });
-    socket.on(`votesUpdated-${sessionID}`, (members: Member[]) => {
-      setSession((s) => s ? { ...s, members } : s);
-    });
+    // Listen for reveal toggles
     socket.on(`revealUpdated-${sessionID}`, ({ showVote }) => {
-      setSession((s) => s ? { ...s, showVote } : s);
+      setSession((s) => (s ? { ...s, showVote } : s));
     });
+
+    // Other update listeners
+    socket.on(`titleUpdated-${sessionID}`, ({ title }) =>
+      setSession((s) => (s ? { ...s, title } : s))
+    );
+    socket.on(`votesUpdated-${sessionID}`, (members: Member[]) =>
+      setSession((s) => (s ? { ...s, members } : s))
+    );
     socket.on(`nameUpdated-${sessionID}`, ({ userID: uid, newName }) => {
       setSession((s) =>
         s
@@ -81,14 +83,14 @@ const SessionPage: React.FC = () => {
 
     return () => {
       socket.off(`fetchData-${sessionID}`, handleFetch);
+      socket.off(`revealUpdated-${sessionID}`);
       socket.off(`titleUpdated-${sessionID}`);
       socket.off(`votesUpdated-${sessionID}`);
-      socket.off(`revealUpdated-${sessionID}`);
       socket.off(`nameUpdated-${sessionID}`);
     };
   }, [sessionID, userID, userName]);
 
-  // UI handlers
+  // UI action handlers
   const saveTitle = () => {
     if (sessionID && titleInput.trim()) {
       socket.emit('updateTitle', { sessionID, title: titleInput.trim() });
@@ -104,35 +106,45 @@ const SessionPage: React.FC = () => {
     if (sessionID) socket.emit('reset', { sessionID });
   };
   const updateName = (uid: string, newName: string) => {
-    if (sessionID) socket.emit('updateUserName', { sessionID, userID: uid, newName });
+    if (sessionID)
+      socket.emit('updateUserName', { sessionID, userID: uid, newName });
   };
 
+  // Spinner until data loads
   if (loading || !session) {
     return (
-      <Box
-        height="100vh"
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-      >
+      <Box height="100vh" display="flex" justifyContent="center" alignItems="center">
         <CircularProgress />
       </Box>
     );
   }
 
+  // ──────── MEDIAN CALCULATION ────────────────────────────────────────────────
+  const votes = session.members
+    .map((m) => m.vote)
+    .filter((v): v is number => v !== null)
+    .sort((a, b) => a - b);
+
+  let median: number | null = null;
+  if (votes.length) {
+    const mid = Math.floor(votes.length / 2);
+    median = votes.length % 2 === 1 ? votes[mid] : (votes[mid - 1] + votes[mid]) / 2;
+  }
+
+  // ──────── RENDER ─────────────────────────────────────────────────────────────
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 3 }}>
         {/* Header */}
-        <Grid container spacing={2} alignItems="center" mb={3}>
+        <Grid container alignItems="center" spacing={2} mb={3}>
           <Grid item xs>
             <TextField
               fullWidth
               variant="outlined"
+              size="small"
               value={titleInput}
               onChange={(e) => setTitleInput(e.target.value)}
               onBlur={saveTitle}
-              size="small"
             />
           </Grid>
           <Grid item>
@@ -179,7 +191,10 @@ const SessionPage: React.FC = () => {
           {[0, 1, 2, 3, 5, 8, 13, 21].map((opt) => {
             const me = session.members.find((m) => m.userID === userID);
             const selected = me?.vote === opt;
-            const disabled = me?.vote !== null && !session.showVote;
+
+            // ◀─ HERE: Only disable AFTER reveal
+            const disabled = session.showVote;
+
             return (
               <Grid item key={opt}>
                 <Box width={64} height={100}>
@@ -194,6 +209,13 @@ const SessionPage: React.FC = () => {
             );
           })}
         </Grid>
+
+        {/* Median */}
+        {session.showVote && median !== null && (
+          <Box mt={2} textAlign="center">
+            <Typography variant="subtitle1">Median: {median}</Typography>
+          </Box>
+        )}
       </Paper>
     </Container>
   );
