@@ -1,7 +1,14 @@
 // src/components/ParticipantCard.tsx
-
 import React, { useEffect, useState } from 'react';
-import { Card, CardHeader, CardContent, Avatar, Typography, IconButton, TextField } from '@mui/material';
+import {
+  Card,
+  CardHeader,
+  Avatar,
+  Typography,
+  IconButton,
+  TextField,
+  CardContent
+} from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 
 export interface Participant {
@@ -21,16 +28,14 @@ const ParticipantCard: React.FC<ParticipantCardProps> = ({
   participant,
   revealed,
   editable = false,
-  onUpdateName,
+  onUpdateName
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [nameInput, setNameInput] = useState(participant.name);
 
-  // Sync local input when participant.name prop changes
+  // Sync input when participant.name updates externally
   useEffect(() => {
-    if (!isEditing) {
-      setNameInput(participant.name);
-    }
+    if (!isEditing) setNameInput(participant.name);
   }, [participant.name, isEditing]);
 
   const handleSave = () => {
@@ -51,10 +56,7 @@ const ParticipantCard: React.FC<ParticipantCardProps> = ({
         }
         action={
           editable && !isEditing ? (
-            <IconButton
-              size="small"
-              onClick={() => setIsEditing(true)}
-            >
+            <IconButton size="small" onClick={() => setIsEditing(true)}>
               <EditIcon fontSize="small" />
             </IconButton>
           ) : null
@@ -70,7 +72,9 @@ const ParticipantCard: React.FC<ParticipantCardProps> = ({
               autoFocus
             />
           ) : (
-            <Typography variant="subtitle1">{participant.name}</Typography>
+            <Typography variant="subtitle1">
+              {participant.name}
+            </Typography>
           )
         }
       />

@@ -2,12 +2,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  // in development, point at your local backend
-  baseURL:
-    process.env.NODE_ENV === 'development'
-      ? 'http://localhost:4000'
-      : window.location.origin,
-  headers: { 'Content-Type': 'application/json' }
+  baseURL: process.env.REACT_APP_API_URL || '',
 });
 
 export default api;
