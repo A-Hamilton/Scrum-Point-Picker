@@ -1,47 +1,49 @@
-// src/components/VoteOptionCard.tsx
-
 import React from 'react';
-import { Card, Typography, styled } from '@mui/material';
+import { Card, Typography } from '@mui/material';
 
-interface Props {
+interface VoteOptionCardProps {
   option: number;
   selected: boolean;
-  onClick?: () => void;
-  disabled?: boolean;
-  'aria-label'?: string;
+  onClick: () => void;
+  disabled: boolean;
 }
 
-const OptionCard = styled(Card, {
-  shouldForwardProp: (prop) => prop !== 'selected' && prop !== 'disabled',
-})<Props>(({ theme, selected, disabled }) => ({
-  height: 100,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: selected ? theme.palette.primary.main : theme.palette.background.paper,
-  color: selected ? theme.palette.common.white : theme.palette.text.primary,
-  border: `2px solid ${selected ? theme.palette.primary.dark : theme.palette.divider}`,
-  cursor: disabled ? 'default' : 'pointer',
-  opacity: disabled ? 0.6 : 1,
-  transition: 'transform 0.2s, background 0.3s',
-  '&:hover': {
-    transform: selected || disabled ? 'none' : 'scale(1.05)',
-  },
-  '&:focus-visible': {
-    outline: `2px solid ${theme.palette.primary.light}`,
-  },
-}));
-
-const VoteOptionCard: React.FC<Props> = ({ option, selected, onClick, disabled, 'aria-label': ariaLabel }) => (
-  <OptionCard
-        selected={selected}
-        onClick={disabled ? undefined : onClick}
-        tabIndex={0}
-        role="button"
-        aria-label={ariaLabel}
-        disabled={disabled} option={0}  >
-    <Typography variant="h4">{option}</Typography>
-  </OptionCard>
-);
+const VoteOptionCard: React.FC<VoteOptionCardProps> = ({
+  option,
+  selected,
+  onClick,
+  disabled,
+}) => {
+  return (
+    <Card
+      onClick={disabled ? undefined : onClick}
+      sx={{
+        width: 80,
+        height: 120,
+        borderRadius: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: disabled ? 'default' : 'pointer',
+        userSelect: 'none',
+        transition: 'transform 0.1s, box-shadow 0.2s',
+        backgroundColor: selected ? 'primary.main' : 'background.paper',
+        color: selected ? 'primary.contrastText' : 'text.primary',
+        boxShadow: selected
+          ? (theme) => theme.shadows[6]
+          : (theme) => theme.shadows[2],
+        '&:hover': disabled
+          ? {}
+          : {
+              transform: 'scale(1.08)',
+              boxShadow: (theme) => theme.shadows[8],
+            },
+      }}
+      elevation={selected ? 6 : 2}
+    >
+      <Typography variant="h5">{option}</Typography>
+    </Card>
+  );
+};
 
 export default VoteOptionCard;

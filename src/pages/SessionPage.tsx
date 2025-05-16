@@ -1,4 +1,3 @@
-// src/pages/SessionPage.tsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -12,27 +11,22 @@ import {
   Box,
   IconButton,
   Tooltip,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteIcon from '@mui/icons-material/Delete';
-import ParticipantCard from '../components/ParticipantCard';
+import ParticipantCard, { Participant } from '../components/ParticipantCard';
 import VoteOptionCard from '../components/VoteOptionCard';
 import { getOrCreateUserID } from '../utils/getOrCreateUserID';
 import { socket } from '../socket';
-// ← Import your helper
 import medianRound from '../utils/medianRound';
-
-interface Member {
-  userID: string;
-  userName: string;
-  vote: number | null;
-}
 
 interface SessionData {
   id: string;
   title: string;
   creatorId: string;
-  members: Member[];
+  members: Participant[];
   showVote: boolean;
 }
 
@@ -41,6 +35,9 @@ const SessionPage: React.FC = () => {
   const navigate = useNavigate();
   const userID = getOrCreateUserID();
   const userName = localStorage.getItem('userName') || 'Anonymous';
+
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,7 +56,7 @@ const SessionPage: React.FC = () => {
     socket.on(`revealUpdated-${sessionID}`, ({ showVote }) =>
       setSession((s) => (s ? { ...s, showVote } : s))
     );
-    socket.on(`votesUpdated-${sessionID}`, (members: Member[]) =>
+    socket.on(`votesUpdated-${sessionID}`, (members: Participant[]) =>
       setSession((s) => (s ? { ...s, members } : s))
     );
     socket.on(`titleUpdated-${sessionID}`, ({ title }) =>
@@ -92,7 +89,7 @@ const SessionPage: React.FC = () => {
     };
   }, [sessionID, userID, userName, navigate]);
 
-  // UI action handlers
+  // Handlers
   const saveTitle = () => {
     if (sessionID && titleInput.trim()) {
       socket.emit('updateTitle', { sessionID, title: titleInput.trim() });
@@ -101,21 +98,19 @@ const SessionPage: React.FC = () => {
   const castVote = (vote: number) => {
     if (sessionID) socket.emit('vote', { sessionID, userID, vote });
   };
-
-  // Reveal with vote-count check
   const handleReveal = () => {
     if (!session) return;
     const total = session.members.length;
-    const voted = session.members.filter((m) => m.vote !== null).length;
-    if (voted === 0) return; // button is disabled
-    if (voted < total) {
-      if (!window.confirm(`Only ${voted}/${total} voted. Reveal anyway?`)) {
-        return;
-      }
+    const votedCount = session.members.filter((m) => m.vote !== null).length;
+    if (votedCount === 0) return;
+    if (
+      votedCount < total &&
+      !window.confirm(`Only ${votedCount}/${total} voted. Reveal anyway?`)
+    ) {
+      return;
     }
     socket.emit('reveal', { sessionID });
   };
-
   const handleReset = () => {
     if (sessionID) socket.emit('reset', { sessionID });
   };
@@ -141,19 +136,18 @@ const SessionPage: React.FC = () => {
     );
   }
 
-  // ── USE YOUR medianRound HELPER ─────────────────────────────────────────────
-  const numericVotes = session.members
+  // Median
+  const votes = session.members
     .map((m) => m.vote)
     .filter((v): v is number => v !== null);
-  const median = medianRound(numericVotes);
+  const median = medianRound(votes);
 
-  // ── DETERMINE IF WE CAN REVEAL ──────────────────────────────────────────────
-  const canReveal =
-    !session.showVote && numericVotes.length > 0;
+  // Can reveal?
+  const canReveal = !session.showVote && votes.length > 0;
 
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
-      <Paper elevation={3} sx={{ p: 3 }}>
+      <Paper sx={{ p: 3 }} elevation={4}>
         {/* Header */}
         <Grid container alignItems="center" spacing={2} mb={3}>
           <Grid item xs>
@@ -200,13 +194,9 @@ const SessionPage: React.FC = () => {
         </Typography>
         <Grid container spacing={2} mb={4}>
           {session.members.map((m) => (
-            <Grid item xs={12} sm={6} md={4} key={m.userID}>
+            <Grid item xs={12} sm={6} md={4} lg={3} xl={2} key={m.userID}>
               <ParticipantCard
-                participant={{
-                  name: m.userName,
-                  voted: m.vote !== null,
-                  vote: m.vote,
-                }}
+                participant={m}
                 revealed={session.showVote}
                 editable={m.userID === userID}
                 onUpdateName={(n) => updateName(m.userID, n)}
@@ -219,25 +209,52 @@ const SessionPage: React.FC = () => {
         <Typography variant="h6" gutterBottom>
           Vote Options
         </Typography>
-        <Grid container spacing={2} justifyContent="center">
-          {[0, 1, 2, 3, 5, 8, 13, 21].map((opt) => {
-            const me = session.members.find((m) => m.userID === userID);
-            const selected = me?.vote === opt;
-            const disabled = session.showVote;
-            return (
-              <Grid item key={opt}>
-                <Box width={64} height={100}>
+
+        {isMobile ? (
+          <Box
+            sx={{
+              display: 'flex',
+              overflowX: 'auto',
+              py: 1,
+              px: 1,
+              gap: 1,
+              '&::-webkit-scrollbar': { display: 'none' },
+              msOverflowStyle: 'none',
+              scrollbarWidth: 'none',
+            }}
+          >
+            {[0, 1, 2, 3, 5, 8, 13, 21].map((opt) => {
+              const me = session.members.find((m) => m.userID === userID);
+              const selected = me?.vote === opt;
+              return (
+                <VoteOptionCard
+                  key={opt}
+                  option={opt}
+                  selected={selected}
+                  onClick={() => castVote(opt)}
+                  disabled={session.showVote}
+                />
+              );
+            })}
+          </Box>
+        ) : (
+          <Grid container spacing={2} justifyContent="center">
+            {[0, 1, 2, 3, 5, 8, 13, 21].map((opt) => {
+              const me = session.members.find((m) => m.userID === userID);
+              const selected = me?.vote === opt;
+              return (
+                <Grid item key={opt}>
                   <VoteOptionCard
                     option={opt}
                     selected={selected}
                     onClick={() => castVote(opt)}
-                    disabled={disabled}
+                    disabled={session.showVote}
                   />
-                </Box>
-              </Grid>
-            );
-          })}
-        </Grid>
+                </Grid>
+              );
+            })}
+          </Grid>
+        )}
 
         {/* Median */}
         {session.showVote && median !== null && (

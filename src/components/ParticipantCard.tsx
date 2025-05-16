@@ -1,122 +1,138 @@
-import React, { useEffect, useState } from 'react';
+// src/components/ParticipantCard.tsx
+
+import React, { useState } from 'react';
 import {
   Card,
-  CardHeader,
-  CardContent,
   Avatar,
+  Typography,
   IconButton,
   TextField,
-  Typography,
   Box,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 
 export interface Participant {
-  name: string;
-  voted: boolean;
+  userID: string;
+  userName: string;
   vote: number | null;
 }
-interface Props {
+
+interface ParticipantCardProps {
   participant: Participant;
   revealed: boolean;
   editable: boolean;
   onUpdateName: (newName: string) => void;
 }
 
-const MAX_NAME_LENGTH = 20;
-
-const ParticipantCard: React.FC<Props> = ({
+const ParticipantCard: React.FC<ParticipantCardProps> = ({
   participant,
   revealed,
   editable,
   onUpdateName,
 }) => {
   const [editing, setEditing] = useState(false);
-  const [nameInput, setNameInput] = useState(participant.name);
+  const [tempName, setTempName] = useState(participant.userName);
 
-  useEffect(() => {
-    setNameInput(participant.name);
-  }, [participant.name]);
-
-  const save = () => {
-    const trimmed = nameInput.trim().slice(0, MAX_NAME_LENGTH) || 'Anonymous';
-    onUpdateName(trimmed);
+  const handleSave = () => {
+    const trimmed = tempName.trim();
+    if (trimmed && trimmed !== participant.userName) {
+      onUpdateName(trimmed);
+    }
     setEditing(false);
   };
 
   return (
     <Card
-      elevation={2}
       sx={{
-        minHeight: 160,
+        p: 2,
+        position: 'relative',
+        minWidth: 200,
+        maxWidth: 240,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
+        height: 160,
       }}
+      elevation={3}
     >
-      <CardHeader
-        avatar={
-          <Avatar>
-            {participant.name.charAt(0).toUpperCase() || '?'}
-          </Avatar>
-        }
-        action={
-          editable && !editing && (
-            <IconButton
-              size="small"
-              onClick={() => setEditing(true)}
-              aria-label="edit name"
-            >
-              <EditIcon fontSize="small" />
-            </IconButton>
-          )
-        }
-        title={
-          editing ? (
-            <TextField
-              value={nameInput}
-              onChange={(e) => {
-                if (e.target.value.length <= MAX_NAME_LENGTH)
-                  setNameInput(e.target.value);
-              }}
-              onBlur={save}
-              onKeyDown={(e) => e.key === 'Enter' && save()}
-              size="small"
-              fullWidth
-              inputProps={{ maxLength: MAX_NAME_LENGTH }}
-              helperText={`${nameInput.length}/${MAX_NAME_LENGTH}`}
-            />
-          ) : (
-            <Typography
-              variant="subtitle1"
-              noWrap
-              sx={{
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {participant.name}
-            </Typography>
-          )
-        }
-      />
+      {/* Top row: Avatar, Name or TextField, Edit button */}
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <Avatar sx={{ mr: 1 }}>
+          {participant.userName.charAt(0).toUpperCase() || 'U'}
+        </Avatar>
 
-      <CardContent>
-        {revealed ? (
-          <Box textAlign="center">
-            <Typography variant="h4">
-              {participant.voted ? participant.vote : '–'}
-            </Typography>
-          </Box>
+        {editing ? (
+          <TextField
+            variant="standard"
+            value={tempName}
+            onChange={(e) => setTempName(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSave();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+            autoFocus
+            fullWidth
+            sx={{ mr: 1 }}
+          />
         ) : (
-          <Typography variant="body2" color="text.secondary">
-            {participant.voted ? 'Voted' : 'Awaiting vote...'}
+          <Typography
+            noWrap
+            sx={{
+              flexGrow: 1,
+              fontWeight: 500,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {participant.userName}
           </Typography>
         )}
-      </CardContent>
+
+        {editable && !editing && (
+          <IconButton
+            size="small"
+            onClick={() => {
+              setTempName(participant.userName);
+              setEditing(true);
+            }}
+          >
+            <EditIcon fontSize="small" />
+          </IconButton>
+        )}
+      </Box>
+
+      {/* Middle: Vote number or awaiting text */}
+      <Box
+        sx={{
+          mt: 2,
+          flexGrow: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {revealed ? (
+          <Typography variant="h4">{participant.vote}</Typography>
+        ) : (
+          <Typography color="text.secondary">Awaiting vote…</Typography>
+        )}
+      </Box>
+
+      {/* Red dot if not yet voted */}
+      {!revealed && participant.vote === null && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            width: 10,
+            height: 10,
+            bgcolor: 'error.main',
+            borderRadius: '50%',
+          }}
+        />
+      )}
     </Card>
   );
 };
