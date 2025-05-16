@@ -4,16 +4,16 @@ import { v4 as uuidv4 } from 'uuid';
 import { Container, TextField, Button, Typography, Box } from '@mui/material';
 
 const JoinSession: React.FC = () => {
-  const [name, setName]     = useState('');
-  const [sessionId, setSid] = useState('');
+  const [sessionId, setSessionId] = useState('');
+  const [name, setName] = useState('');
   const navigate = useNavigate();
 
-  const join = () => {
-    const n = name.trim();
-    const s = sessionId.trim();
-    if (!n || !s) return;
-    navigate(`/${s}`, {
-      state: { userID: uuidv4(), userName: n }
+  const handleJoin = () => {
+    const trimmedId = sessionId.trim();
+    const trimmedName = name.trim();
+    if (!trimmedId || !trimmedName) return;
+    navigate(`/${trimmedId}`, {
+      state: { userID: uuidv4(), userName: trimmedName }
     });
   };
 
@@ -25,7 +25,7 @@ const JoinSession: React.FC = () => {
       <TextField
         label="Session ID"
         value={sessionId}
-        onChange={e => setSid(e.target.value)}
+        onChange={e => setSessionId(e.target.value)}
         fullWidth
         margin="normal"
       />
@@ -37,7 +37,7 @@ const JoinSession: React.FC = () => {
         margin="normal"
       />
       <Box sx={{ mt: 2 }}>
-        <Button fullWidth variant="contained" onClick={join}>
+        <Button fullWidth variant="contained" onClick={handleJoin}>
           Join Session
         </Button>
       </Box>
