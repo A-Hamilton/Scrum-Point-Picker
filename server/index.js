@@ -5,9 +5,9 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 
-// Import routes and store
+// Import shared sessions store and REST router
+const sessions = require('./sessionsStore');
 const sessionRoutes = require('./routes/sessions');
-const sessions       = require('./sessionsStore');
 
 const app = express();
 app.use(cors());
@@ -19,17 +19,16 @@ app.use('/sessions', sessionRoutes);
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
+// Broadcast full session state to clients
 function emitSession(sessionID) {
   const sess = sessions[sessionID];
-  if (sess) {
-    io.to(sessionID).emit(`fetchData-${sessionID}`, sess);
-  }
+  if (sess) io.to(sessionID).emit(`fetchData-${sessionID}`, sess);
 }
 
 io.on('connection', socket => {
   console.log('Client connected:', socket.id);
 
-  // Create a new session
+  // Create a session
   socket.on('createRoom', ({ user }) => {
     const sessionID = uuidv4();
     sessions[sessionID] = {
@@ -53,14 +52,13 @@ io.on('connection', socket => {
     const sess = sessions[sessionID];
     if (!sess) return;
     socket.join(sessionID);
-    const exists = sess.members.some(m => m.userID === user.userID);
-    if (!exists && user.userName.trim()) {
+    if (!sess.members.some(m => m.userID === user.userID)) {
       sess.members.push({ userID: user.userID, userName: user.userName.trim(), vote: null });
     }
     emitSession(sessionID);
   });
 
-  // Update title
+  // Update session title
   socket.on('updateTitle', ({ sessionID, title }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
@@ -68,16 +66,13 @@ io.on('connection', socket => {
     io.to(sessionID).emit(`titleUpdated-${sessionID}`, { title: sess.title });
   });
 
-  // Cast vote
+  // Cast or change vote
   socket.on('vote', ({ sessionID, userID, vote }) => {
     const sess = sessions[sessionID];
     if (!sess) return;
     let member = sess.members.find(m => m.userID === userID);
-    if (member) {
-      member.vote = vote;
-    } else {
-      sess.members.push({ userID, userName: 'Anonymous', vote });
-    }
+    if (member) member.vote = vote;
+    else sess.members.push({ userID, userName: 'Anonymous', vote });
     io.to(sessionID).emit(`votesUpdated-${sessionID}`, sess.members);
   });
 
@@ -111,5 +106,6 @@ io.on('connection', socket => {
   socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
 });
 
-const PORT = process.env.PORT || 5000;
+// Start server
+const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => console.log(`Server listening on ${PORT}`));

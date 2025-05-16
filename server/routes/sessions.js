@@ -5,8 +5,7 @@ const sessions = require('../sessionsStore');
 
 const router = express.Router();
 
-// POST /sessions
-// Create a new session and return its ID
+// POST /sessions → Create a new session
 router.post('/', (req, res) => {
   const sessionID = uuidv4();
   sessions[sessionID] = {
@@ -19,13 +18,10 @@ router.post('/', (req, res) => {
   res.json({ id: sessionID });
 });
 
-// GET /sessions/:id
-// Retrieve an existing session
+// GET /sessions/:id → Retrieve session data
 router.get('/:id', (req, res) => {
   const sess = sessions[req.params.id];
-  if (!sess) {
-    return res.status(404).json({ message: 'Session not found' });
-  }
+  if (!sess) return res.status(404).json({ message: 'Session not found' });
   res.json(sess);
 });
 

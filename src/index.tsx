@@ -1,23 +1,23 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { CssBaseline } from '@mui/material';
 import App from './App';
-import ThemeContextProvider from './context/ThemeContext';
-import { SocketProvider } from './context/SocketContext';
+import { BrowserRouter } from 'react-router-dom';
+import CssBaseline from '@mui/material/CssBaseline';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+
+// Ensure your App is wrapped in BrowserRouter
+const theme = createTheme({ palette: { mode: 'dark' } });
 
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
 root.render(
   <React.StrictMode>
-    <ThemeContextProvider>
+    <ThemeProvider theme={theme}>
       <CssBaseline />
-      <SocketProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </SocketProvider>
-    </ThemeContextProvider>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ThemeProvider>
   </React.StrictMode>
 );
