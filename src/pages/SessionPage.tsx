@@ -1,6 +1,6 @@
 // src/pages/SessionPage.tsx
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Container,
   Paper,
@@ -10,11 +10,17 @@ import {
   TextField,
   CircularProgress,
   Box,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DeleteIcon from '@mui/icons-material/Delete';
 import ParticipantCard from '../components/ParticipantCard';
 import VoteOptionCard from '../components/VoteOptionCard';
 import { getOrCreateUserID } from '../utils/getOrCreateUserID';
 import { socket } from '../socket';
+// ← Import your helper
+import medianRound from '../utils/medianRound';
 
 interface Member {
   userID: string;
@@ -32,6 +38,7 @@ interface SessionData {
 
 const SessionPage: React.FC = () => {
   const { sessionID } = useParams<{ sessionID: string }>();
+  const navigate = useNavigate();
   const userID = getOrCreateUserID();
   const userName = localStorage.getItem('userName') || 'Anonymous';
 
@@ -41,34 +48,24 @@ const SessionPage: React.FC = () => {
 
   useEffect(() => {
     if (!sessionID) return;
-
-    // Ensure socket is connected
     if (!socket.connected) socket.connect();
-
-    // Join the room
     socket.emit('joinRoom', { sessionID, user: { userID, userName } });
 
-    // Handler for initial session data
-    const handleFetch = (data: SessionData) => {
+    socket.on(`fetchData-${sessionID}`, (data: SessionData) => {
       setSession(data);
       setTitleInput(data.title);
       setLoading(false);
-    };
-    socket.on(`fetchData-${sessionID}`, handleFetch);
-
-    // Listen for reveal toggles
-    socket.on(`revealUpdated-${sessionID}`, ({ showVote }) => {
-      setSession((s) => (s ? { ...s, showVote } : s));
     });
-
-    // Other update listeners
-    socket.on(`titleUpdated-${sessionID}`, ({ title }) =>
-      setSession((s) => (s ? { ...s, title } : s))
+    socket.on(`revealUpdated-${sessionID}`, ({ showVote }) =>
+      setSession((s) => (s ? { ...s, showVote } : s))
     );
     socket.on(`votesUpdated-${sessionID}`, (members: Member[]) =>
       setSession((s) => (s ? { ...s, members } : s))
     );
-    socket.on(`nameUpdated-${sessionID}`, ({ userID: uid, newName }) => {
+    socket.on(`titleUpdated-${sessionID}`, ({ title }) =>
+      setSession((s) => (s ? { ...s, title } : s))
+    );
+    socket.on(`nameUpdated-${sessionID}`, ({ userID: uid, newName }) =>
       setSession((s) =>
         s
           ? {
@@ -78,17 +75,22 @@ const SessionPage: React.FC = () => {
               ),
             }
           : s
-      );
+      )
+    );
+    socket.on('sessionDeleted', () => {
+      alert('Session deleted');
+      navigate('/create', { replace: true });
     });
 
     return () => {
-      socket.off(`fetchData-${sessionID}`, handleFetch);
+      socket.off(`fetchData-${sessionID}`);
       socket.off(`revealUpdated-${sessionID}`);
-      socket.off(`titleUpdated-${sessionID}`);
       socket.off(`votesUpdated-${sessionID}`);
+      socket.off(`titleUpdated-${sessionID}`);
       socket.off(`nameUpdated-${sessionID}`);
+      socket.off('sessionDeleted');
     };
-  }, [sessionID, userID, userName]);
+  }, [sessionID, userID, userName, navigate]);
 
   // UI action handlers
   const saveTitle = () => {
@@ -99,18 +101,38 @@ const SessionPage: React.FC = () => {
   const castVote = (vote: number) => {
     if (sessionID) socket.emit('vote', { sessionID, userID, vote });
   };
+
+  // Reveal with vote-count check
   const handleReveal = () => {
-    if (sessionID) socket.emit('reveal', { sessionID });
+    if (!session) return;
+    const total = session.members.length;
+    const voted = session.members.filter((m) => m.vote !== null).length;
+    if (voted === 0) return; // button is disabled
+    if (voted < total) {
+      if (!window.confirm(`Only ${voted}/${total} voted. Reveal anyway?`)) {
+        return;
+      }
+    }
+    socket.emit('reveal', { sessionID });
   };
+
   const handleReset = () => {
     if (sessionID) socket.emit('reset', { sessionID });
+  };
+  const handleDelete = () => {
+    if (window.confirm('Delete this session for everyone?')) {
+      socket.emit('deleteSession', { sessionID });
+    }
+  };
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    alert('Link copied to clipboard');
   };
   const updateName = (uid: string, newName: string) => {
     if (sessionID)
       socket.emit('updateUserName', { sessionID, userID: uid, newName });
   };
 
-  // Spinner until data loads
   if (loading || !session) {
     return (
       <Box height="100vh" display="flex" justifyContent="center" alignItems="center">
@@ -119,19 +141,16 @@ const SessionPage: React.FC = () => {
     );
   }
 
-  // ──────── MEDIAN CALCULATION ────────────────────────────────────────────────
-  const votes = session.members
+  // ── USE YOUR medianRound HELPER ─────────────────────────────────────────────
+  const numericVotes = session.members
     .map((m) => m.vote)
-    .filter((v): v is number => v !== null)
-    .sort((a, b) => a - b);
+    .filter((v): v is number => v !== null);
+  const median = medianRound(numericVotes);
 
-  let median: number | null = null;
-  if (votes.length) {
-    const mid = Math.floor(votes.length / 2);
-    median = votes.length % 2 === 1 ? votes[mid] : (votes[mid - 1] + votes[mid]) / 2;
-  }
+  // ── DETERMINE IF WE CAN REVEAL ──────────────────────────────────────────────
+  const canReveal =
+    !session.showVote && numericVotes.length > 0;
 
-  // ──────── RENDER ─────────────────────────────────────────────────────────────
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 3 }}>
@@ -148,16 +167,29 @@ const SessionPage: React.FC = () => {
             />
           </Grid>
           <Grid item>
+            <Tooltip title="Copy session link">
+              <IconButton onClick={handleCopyLink}>
+                <ContentCopyIcon />
+              </IconButton>
+            </Tooltip>
             <Button
               variant="contained"
               onClick={handleReveal}
-              disabled={session.showVote}
+              disabled={!canReveal}
               sx={{ mr: 1 }}
             >
               Reveal
             </Button>
-            <Button variant="outlined" onClick={handleReset}>
+            <Button variant="outlined" onClick={handleReset} sx={{ mr: 1 }}>
               Reset
+            </Button>
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={handleDelete}
+              startIcon={<DeleteIcon />}
+            >
+              Delete
             </Button>
           </Grid>
         </Grid>
@@ -191,10 +223,7 @@ const SessionPage: React.FC = () => {
           {[0, 1, 2, 3, 5, 8, 13, 21].map((opt) => {
             const me = session.members.find((m) => m.userID === userID);
             const selected = me?.vote === opt;
-
-            // ◀─ HERE: Only disable AFTER reveal
             const disabled = session.showVote;
-
             return (
               <Grid item key={opt}>
                 <Box width={64} height={100}>
