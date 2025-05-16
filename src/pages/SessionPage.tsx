@@ -21,7 +21,6 @@ interface Member {
   userName: string;
   vote: number | null;
 }
-
 interface SessionData {
   id: string;
   title: string;
@@ -32,7 +31,7 @@ interface SessionData {
 
 const SessionPage: React.FC = () => {
   const { sessionID } = useParams<{ sessionID: string }>();
-  const userID = getOrCreateUserID();
+  const userID   = getOrCreateUserID();
   const userName = localStorage.getItem('userName') || 'Anonymous';
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -41,61 +40,33 @@ const SessionPage: React.FC = () => {
 
   useEffect(() => {
     if (!sessionID) return;
-    console.log('🔄 SessionPage mount for', sessionID);
 
-    // 1️⃣ (Re)connect the shared socket
-    if (socket.connected) {
-      console.log('⚠️ socket already connected, disconnecting first');
-      socket.disconnect();
-    }
-    console.log('🔌 Connecting socket…');
-    socket.connect();
-
-    // 2️⃣ Once connected, emit joinRoom
+    // (Re)connect & join
+    if (!socket.connected) socket.connect();
     socket.once('connect', () => {
-      console.log('✅ socket connected (id=', socket.id, ')');
-      console.log('➡️ Emitting joinRoom', { sessionID, userID, userName });
-      socket.emit('joinRoom', {
-        sessionID,
-        user: { userID, userName },
-      });
-
-      // 3️⃣ DEBUG: log all incoming events
-      socket.onAny((eventName, ...args) => {
-        console.log('🐛 SOCKET EVENT:', eventName, args);
-      });
+      socket.emit('joinRoom', { sessionID, user: { userID, userName } });
     });
 
-    // 4️⃣ Your session‐payload handler
+    // Handler for initial + full-session broadcasts
     const handleFetch = (data: SessionData) => {
-      console.log('📥 handleFetch =>', data);
       setSession(data);
       setTitleInput(data.title);
       setLoading(false);
     };
 
-    // 5️⃣ Listen for both the expected and any other payload event
     socket.on(`fetchData-${sessionID}`, handleFetch);
-    socket.on('fetchData', handleFetch);
-    // If you discover (via the logs) that your server actually uses, say, 'sessionData',
-    // replace/add:
-    //   socket.on('sessionData', handleFetch);
 
-    // 6️⃣ Other updates
+    // Subsequent updates
     socket.on(`titleUpdated-${sessionID}`, ({ title }) => {
-      console.log('🔤 titleUpdated:', title);
-      setSession((s) => (s ? { ...s, title } : s));
+      setSession((s) => s ? { ...s, title } : s);
     });
     socket.on(`votesUpdated-${sessionID}`, (members: Member[]) => {
-      console.log('✏️ votesUpdated:', members);
-      setSession((s) => (s ? { ...s, members } : s));
+      setSession((s) => s ? { ...s, members } : s);
     });
     socket.on(`revealUpdated-${sessionID}`, ({ showVote }) => {
-      console.log('👁 revealUpdated:', showVote);
-      setSession((s) => (s ? { ...s, showVote } : s));
+      setSession((s) => s ? { ...s, showVote } : s);
     });
     socket.on(`nameUpdated-${sessionID}`, ({ userID: uid, newName }) => {
-      console.log('🖋 nameUpdated:', uid, newName);
       setSession((s) =>
         s
           ? {
@@ -109,45 +80,33 @@ const SessionPage: React.FC = () => {
     });
 
     return () => {
-      console.log('🧹 Cleaning up listeners for', sessionID);
       socket.off(`fetchData-${sessionID}`, handleFetch);
-      socket.off('fetchData', handleFetch);
-      // if you added 'sessionData', also remove it here:
-      // socket.off('sessionData', handleFetch);
       socket.off(`titleUpdated-${sessionID}`);
       socket.off(`votesUpdated-${sessionID}`);
       socket.off(`revealUpdated-${sessionID}`);
       socket.off(`nameUpdated-${sessionID}`);
-      socket.offAny(); // remove the debug logger
-      // do NOT socket.disconnect() here so other pages can reuse it
     };
   }, [sessionID, userID, userName]);
 
-  // Handlers
+  // UI handlers
   const saveTitle = () => {
-    if (!sessionID || !titleInput.trim()) return;
-    console.log('✏️ Emitting updateTitle', titleInput.trim());
-    socket.emit('updateTitle', { sessionID, title: titleInput.trim() });
+    if (sessionID && titleInput.trim()) {
+      socket.emit('updateTitle', { sessionID, title: titleInput.trim() });
+    }
   };
   const castVote = (vote: number) => {
-    console.log('🎯 Emitting vote', vote);
     if (sessionID) socket.emit('vote', { sessionID, userID, vote });
   };
   const handleReveal = () => {
-    console.log('👁 Emitting reveal');
     if (sessionID) socket.emit('reveal', { sessionID });
   };
   const handleReset = () => {
-    console.log('🔄 Emitting reset');
     if (sessionID) socket.emit('reset', { sessionID });
   };
   const updateName = (uid: string, newName: string) => {
-    console.log('🖊 Emitting updateUserName', uid, newName);
-    if (sessionID)
-      socket.emit('updateUserName', { sessionID, userID: uid, newName });
+    if (sessionID) socket.emit('updateUserName', { sessionID, userID: uid, newName });
   };
 
-  // Loading state
   if (loading || !session) {
     return (
       <Box
@@ -161,12 +120,11 @@ const SessionPage: React.FC = () => {
     );
   }
 
-  // Main UI
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 3 }}>
         {/* Header */}
-        <Grid container alignItems="center" spacing={2} mb={3}>
+        <Grid container spacing={2} alignItems="center" mb={3}>
           <Grid item xs>
             <TextField
               fullWidth
